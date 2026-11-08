@@ -4,6 +4,8 @@ Run on desktop:     python main.py
 Build for browser:  pygbag blueblood   (from the parent folder; see README)
 """
 import asyncio
+import json
+import os
 import sys
 import math
 import random
@@ -48,6 +50,7 @@ PINK = (240, 140, 180)
 
 # --- the manor is drawn in manor.py ---------------------------------------
 import manor  # noqa: E402
+import net  # noqa: E402
 from manor import DOOR_C, DOOR_D, GOLD, build_background, draw_fire  # noqa: E402
 
 
@@ -280,6 +283,128 @@ class Match:
                 "fox": read_side(held, keys, self.side_of("fox"))}
 
 
+# --- online play --------------------------------------------------------------
+ONLINE_MOVE = {"up": (pygame.KSCAN_W, pygame.KSCAN_UP), "down": (pygame.KSCAN_S, pygame.KSCAN_DOWN),
+               "left": (pygame.KSCAN_A, pygame.KSCAN_LEFT), "right": (pygame.KSCAN_D, pygame.KSCAN_RIGHT)}
+ONLINE_ACT = (pygame.KSCAN_E, pygame.KSCAN_SPACE, pygame.KSCAN_PERIOD)
+ONLINE_PERK = (pygame.KSCAN_Q, pygame.KSCAN_SLASH, pygame.KSCAN_LSHIFT, pygame.KSCAN_RSHIFT)
+SERVER_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "server.txt")
+
+
+def load_server():
+    try:
+        with open(SERVER_FILE, encoding="utf-8") as f:
+            return f.read().strip() or "localhost"
+    except OSError:
+        return "localhost"
+
+
+def save_server(addr):
+    try:
+        with open(SERVER_FILE, "w", encoding="utf-8") as f:
+            f.write(addr)
+    except OSError:
+        pass
+
+
+def server_url(addr):
+    """"1.2.3.4" -> ws://1.2.3.4:8765,  "my-game.onrender.com" -> wss://my-game.onrender.com"""
+    addr = addr.strip()
+    if addr.startswith(("ws://", "wss://")):
+        return addr
+    host = addr.split(":")[0]
+    local = host == "localhost" or host.replace(".", "").isdigit() or host.endswith(".local")
+    if ":" in addr or not local and "." not in host:
+        return "ws://" + addr
+    return f"ws://{addr}:{net.PORT}" if local else "wss://" + addr
+
+
+class NetClient:
+    """Talks to the server in the background while the game keeps drawing."""
+
+    def __init__(self, addr):
+        self.url = server_url(addr)
+        self.status = "connecting"      # connecting | connected | left | error | closed
+        self.error = None
+        self.code = None
+        self.meta = None
+        self.snap = None
+        self.events = []
+        self.out = asyncio.Queue()
+        self.task = asyncio.ensure_future(self.run())
+
+    async def run(self):
+        try:
+            import websockets
+        except ImportError:
+            self.status, self.error = "error", "Install the network library first:  pip install websockets"
+            return
+        try:
+            async with websockets.connect(self.url, open_timeout=8) as ws:
+                self.status = "connected"
+                sender = asyncio.ensure_future(self._send(ws))
+                try:
+                    async for raw in ws:
+                        m = json.loads(raw)
+                        if m["type"] == "room":
+                            self.code = m["code"]
+                        elif m["type"] == "state":
+                            self.meta, self.snap = m["meta"], m["game"]
+                            self.events.extend(m["game"]["ev"])
+                        elif m["type"] == "error":
+                            self.status, self.error = "error", m["text"]
+                        elif m["type"] == "left":
+                            self.status = "left"
+                finally:
+                    sender.cancel()
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            if self.status == "connecting":
+                self.status, self.error = "error", f"Can't reach the server at {self.url}"
+            elif self.status == "connected":
+                self.status, self.error = "error", f"Lost connection ({e.__class__.__name__})"
+            return
+        if self.status == "connected":
+            self.status = "closed"
+
+    async def _send(self, ws):
+        while True:
+            await ws.send(json.dumps(await self.out.get()))
+
+    def send(self, msg):
+        self.out.put_nowait(msg)
+
+    def take_events(self):
+        ev, self.events = self.events, []
+        return ev
+
+    def close(self):
+        self.task.cancel()
+
+
+class NetMatch:
+    """The match as the server describes it (same fields the renderer uses for a local match)."""
+
+    def __init__(self, meta):
+        self.wins, self.round, self.cat_player = meta["wins"], meta["round"], meta["cat_player"]
+        self.last, self.done, self.you = meta["last"], meta["state"] == "done", meta["you"]
+
+    def player_of(self, role):
+        return self.cat_player if role == "cat" else 1 - self.cat_player
+
+    def side_of(self, role):
+        return 0                        # online everyone plays on their own keyboard
+
+
+def online_input(held, keys):
+    def on(names):
+        return any(k in held for k in names)
+    return {"dx": on(ONLINE_MOVE["right"]) - on(ONLINE_MOVE["left"]),
+            "dy": on(ONLINE_MOVE["down"]) - on(ONLINE_MOVE["up"]),
+            "act": any(k in keys for k in ONLINE_ACT), "summon": any(k in keys for k in ONLINE_PERK)}
+
+
 # --- rendering --------------------------------------------------------------
 class Renderer:
     def __init__(self, window):
@@ -306,6 +431,7 @@ class Renderer:
         self.t = 0.0
         self.heart_t = 0.0
         self.idle = {}        # how long each character has been standing still
+        self.viewer = None    # online: "cat" or "fox" (whose eyes we see the dark through)
         self.fish_icon = pygame.transform.scale(self.spr["fish"], (18, 10))
         self.fish_icon_dim = self.fish_icon.copy()
         self.fish_icon_dim.set_alpha(60)
@@ -505,9 +631,14 @@ class Renderer:
         dark = pygame.Surface((W, H - HUD_H), pygame.SRCALPHA)
         base = 238
         dark.fill((5, 5, 15, base))
-        lights = [(g.fox, 110)]
-        if not g.cat.hidden:
-            lights.append((g.cat, 110))
+        if self.viewer == "cat":                    # online: you only see around yourself
+            lights = [] if g.cat.hidden else [(g.cat, 110)]
+        elif self.viewer == "fox":
+            lights = [(g.fox, 110)]
+        else:
+            lights = [(g.fox, 110)]
+            if not g.cat.hidden:
+                lights.append((g.cat, 110))
         lights += [(n, 85 if n.kind == "janis" else 55) for n in g.npcs]
         lights += [(f, 20) for f in g.fish]
         if STYLE["name"] == "manor":
@@ -873,8 +1004,85 @@ class Renderer:
         self.hints(W // 2, y, [("R", f"Timer: {timer_label(SETTINGS['timer'])}"), ("T", f"Style: {style}"),
                                ("C", f"Keys {keys_mode}"), ("F11", "Fullscreen")],
                    self.f_small, 24)
-        if int(self.t * 2) % 2 == 0:
-            self.hints(W // 2, H - 44, [("Enter", "Start the match")], self.f_mid, 32)
+        self.hints(W // 2, H - 44, [("Enter", "Play on this computer"), ("O", "Play online")], self.f_mid, 32)
+
+def draw_online(rnd, dt, addr, editing, mode, code, msg):
+    """The "Play online" screen."""
+    rnd.texts.clear()
+    rnd.t += dt
+    rnd.screen.blit(rnd.bg, (0, HUD_H))
+    rnd.overlay(170)
+    box = pygame.Rect(W // 2 - 360, 110, 720, 470)
+    rnd.panel(box, (120, 160, 255))
+    rnd.text("PLAY ONLINE", rnd.f_big, (120, 160, 255), center=(W // 2, box.y + 46))
+    rnd.text("Two computers, one match. Each player sees their own screen.", rnd.f_small,
+             (214, 210, 202), center=(W // 2, box.y + 88))
+    y = box.y + 130
+    rnd.text("Server", rnd.f_small, (180, 176, 170), topleft=(box.x + 50, y + 4))
+    field = pygame.Rect(box.x + 140, y, 420, 32)
+    pygame.draw.rect(rnd.screen, (40, 34, 46), field, border_radius=6)
+    pygame.draw.rect(rnd.screen, (255, 230, 150) if editing else (90, 84, 100), field, 2, border_radius=6)
+    caret = "|" if editing and int(rnd.t * 2) % 2 else ""
+    rnd.text(addr + caret, rnd.f_small, (240, 236, 228), topleft=(field.x + 10, field.y + 7), shadow=False)
+    if not editing:
+        k = rnd.key(field.right + 16, y + 3, "A")
+        rnd.text("change", rnd.f_tiny, (180, 176, 170), topleft=(k.right + 6, y + 8))
+    y += 70
+    if mode == "join":
+        rnd.text("Type the room code your friend got:", rnd.f_mid, (236, 232, 224), center=(W // 2, y + 10))
+        cf = pygame.Rect(W // 2 - 110, y + 40, 220, 64)
+        pygame.draw.rect(rnd.screen, (40, 34, 46), cf, border_radius=10)
+        pygame.draw.rect(rnd.screen, (255, 230, 150), cf, 2, border_radius=10)
+        rnd.text((code + ("_" if int(rnd.t * 2) % 2 else " ")).ljust(4), rnd.f_big, (255, 236, 170),
+                 center=cf.center, shadow=False)
+        rnd.hints(W // 2, y + 130, [("Enter", "Join"), ("Esc", "Back")])
+    elif editing:
+        rnd.text("Type the server address (an IP like 192.168.1.20, or a web address),", rnd.f_small,
+                 (214, 210, 202), center=(W // 2, y + 10))
+        rnd.text("then press Enter.", rnd.f_small, (214, 210, 202), center=(W // 2, y + 36))
+        rnd.hints(W // 2, y + 80, [("Enter", "Save"), ("Esc", "Cancel")])
+    else:
+        r = rnd.key(box.x + 120, y, "H", 34, rnd.f_mid)
+        rnd.text("Host a game", rnd.f_mid, (236, 232, 224), topleft=(r.right + 14, y + 4))
+        rnd.text("You get a room code to send to your friend", rnd.f_small, (180, 176, 170),
+                 topleft=(r.right + 14, y + 36))
+        y += 86
+        r = rnd.key(box.x + 120, y, "J", 34, rnd.f_mid)
+        rnd.text("Join a game", rnd.f_mid, (236, 232, 224), topleft=(r.right + 14, y + 4))
+        rnd.text("Type the code your friend got", rnd.f_small, (180, 176, 170), topleft=(r.right + 14, y + 36))
+        y += 96
+        rnd.text(f"Round timer: {timer_label(SETTINGS['timer'])}  (the host's setting, change it with R in the menu)",
+                 rnd.f_tiny, (170, 166, 160), center=(W // 2, y))
+        rnd.hints(W // 2, box.bottom - 46, [("Esc", "Back to the menu")])
+    if msg:
+        rnd.text(msg, rnd.f_small, (255, 140, 130), center=(W // 2, box.bottom + 30))
+
+
+def draw_waiting(rnd, dt, client):
+    rnd.texts.clear()
+    rnd.t += dt
+    rnd.screen.blit(rnd.bg, (0, HUD_H))
+    rnd.overlay(170)
+    box = pygame.Rect(W // 2 - 330, 150, 660, 380)
+    rnd.panel(box, (120, 160, 255))
+    if client.status == "error":
+        rnd.text("Something went wrong", rnd.f_big, (255, 150, 140), center=(W // 2, box.y + 70))
+        rnd.text(client.error or "", rnd.f_small, (236, 232, 224), center=(W // 2, box.y + 140))
+        rnd.text("Check the server address and that the server is running.", rnd.f_small,
+                 (180, 176, 170), center=(W // 2, box.y + 175))
+    elif client.code:
+        rnd.text("Room code", rnd.f_mid, (214, 210, 202), center=(W // 2, box.y + 60))
+        rnd.text(client.code, rnd.f_huge, (255, 236, 170), center=(W // 2, box.y + 140))
+        rnd.text("Send this code to your friend. They choose Join and type it.", rnd.f_small,
+                 (236, 232, 224), center=(W // 2, box.y + 220))
+        dots = "." * (1 + int(rnd.t * 2) % 3)
+        rnd.text("Waiting for the second player" + dots, rnd.f_small, (180, 176, 170), center=(W // 2, box.y + 256))
+    else:
+        dots = "." * (1 + int(rnd.t * 2) % 3)
+        rnd.text("Connecting" + dots, rnd.f_big, (236, 232, 224), center=(W // 2, box.y + 150))
+        rnd.text(client.url, rnd.f_small, (180, 176, 170), center=(W // 2, box.y + 210))
+    rnd.hints(W // 2, box.bottom - 50, [("Esc", "Cancel")])
+
 
 def make_window(fullscreen):
     if sys.platform == "emscripten":              # browser build
@@ -909,11 +1117,20 @@ async def main():
     match = Match()
     state = "menu"
     held = set()   # physical keys currently held down
+    # online
+    client = None
+    mirror = None
+    addr, editing, mode, code, msg = load_server(), False, None, "", ""
+    addr_backup = addr
+    last_sent, send_timer, net_round = None, 0.0, None
 
     while True:
         dt = min(clock.tick(60) / 1000.0, 0.05)
         keys_down = set()
+        typed = ""
         for e in pygame.event.get():
+            if e.type == pygame.TEXTINPUT:
+                typed += e.text
             if e.type == pygame.QUIT:
                 pygame.quit()
                 return
@@ -929,6 +1146,9 @@ async def main():
                 held.clear()
 
         if state == "menu":
+            if pygame.KSCAN_O in keys_down:
+                state, editing, mode, code, msg = "online", False, None, "", ""
+                typed = ""
             if pygame.KSCAN_R in keys_down:
                 SETTINGS["timer"] = TIMERS[(TIMERS.index(SETTINGS["timer"]) + 1) % len(TIMERS)]
             if pygame.KSCAN_C in keys_down:
@@ -957,6 +1177,86 @@ async def main():
             elif pygame.KSCAN_ESCAPE in keys_down:
                 state = "menu"
             rnd.draw_game(game, match, 0, state)
+        elif state == "online":
+            if editing:
+                if pygame.KSCAN_BACKSPACE in keys_down:
+                    addr = addr[:-1]
+                addr += "".join(ch for ch in typed if ch.isprintable() and ch != " ")
+                if pygame.KSCAN_RETURN in keys_down and addr:
+                    editing = False
+                    save_server(addr)
+                elif pygame.KSCAN_ESCAPE in keys_down:
+                    editing, addr = False, addr_backup
+            elif mode == "join":
+                if pygame.KSCAN_BACKSPACE in keys_down:
+                    code = code[:-1]
+                code = (code + "".join(ch for ch in typed.upper() if ch.isalpha()))[:4]
+                if pygame.KSCAN_RETURN in keys_down and len(code) == 4:
+                    client = NetClient(addr)
+                    client.send({"type": "join", "code": code})
+                    state, mirror, net_round = "net", None, None
+                elif pygame.KSCAN_ESCAPE in keys_down:
+                    mode = None
+            else:
+                if pygame.KSCAN_A in keys_down:
+                    editing, addr_backup, msg = True, addr, ""
+                elif pygame.KSCAN_J in keys_down:
+                    mode, code, msg = "join", "", ""
+                elif pygame.KSCAN_H in keys_down:
+                    client = NetClient(addr)
+                    client.send({"type": "host", "timer": SETTINGS["timer"]})
+                    state, mirror, net_round = "net", None, None
+                elif pygame.KSCAN_ESCAPE in keys_down:
+                    state = "menu"
+            if state == "online":
+                draw_online(rnd, dt, addr, editing, mode, code, msg)
+        elif state == "net":
+            leave = pygame.KSCAN_ESCAPE in keys_down
+            if client.snap is None or client.meta is None:
+                draw_waiting(rnd, dt, client)
+                if client.status == "error" and client.error == "No game with this code":
+                    msg = "No game with this code. Check it and try again."
+                    leave = True
+                    state = "online"
+            else:
+                meta = client.meta
+                if mirror is None:
+                    mirror = net.MirrorGame(client.snap["lvl"])
+                if meta["round"] != net_round:
+                    net_round = meta["round"]
+                    rnd.reset()
+                mirror.apply(client.snap)
+                mirror.events = client.take_events()
+                rnd.handle_events(mirror)
+                mirror.smooth(dt)
+                you = meta["you"]
+                PLAYER[:] = ["You", "Friend"] if you == 0 else ["Friend", "You"]
+                rnd.viewer = "cat" if meta["cat_player"] == you else "fox"
+                if meta["state"] == "play":
+                    inp = online_input(held, keys_down)
+                    send_timer -= dt
+                    if inp["act"] or inp["summon"] or (inp["dx"], inp["dy"]) != last_sent or send_timer <= 0:
+                        client.send(dict(inp, type="input"))
+                        last_sent, send_timer = (inp["dx"], inp["dy"]), 0.25
+                elif pygame.KSCAN_RETURN in keys_down:
+                    client.send({"type": "next"})
+                view = "play" if meta["state"] == "play" else "over"
+                rnd.draw_game(mirror, NetMatch(meta), dt, view)
+                if client.status in ("left", "error", "closed"):
+                    rnd.overlay(150)
+                    text = "Your friend left the game." if client.status == "left" else \
+                        (client.error or "The connection was closed.")
+                    rnd.text(text, rnd.f_big, (255, 236, 170), center=(W // 2, H // 2 - 20))
+                    rnd.hints(W // 2, H // 2 + 40, [("Esc", "Back to the menu")])
+            if leave and state == "net":
+                client.close()
+                client, mirror = None, None
+                PLAYER[:] = ["Player 1", "Player 2"]
+                rnd.viewer = None
+                state = "menu"
+            elif leave:
+                client.close()
+                client, mirror = None, None
         elif state == "over":
             if pygame.KSCAN_RETURN in keys_down:
                 if match.done:
