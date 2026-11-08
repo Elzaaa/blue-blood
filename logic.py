@@ -9,33 +9,39 @@ from collections import deque
 
 TILE = 32
 
-# House map.  # wall, D door, . floor (wood), , floor (tiles)
-# f cabinet/table, s sofa, b bed, p plant — obstacles
-# w wardrobe (the cat hides in it), v table with a vase
-MAP = [
-    "#########################",
-    "#ff,,,ff#w..s...#bb..w.p#",
-    "#,,,,,,,#.......#bb.....#",
-    "#,,,f,,,D..v.f..D.......#",
-    "#,,,,,,,#.......#....v..#",
-    "####D#######D#######D####",
-    "#.......................#",
-    "#..p.........v.........p#",
-    "#.......................#",
-    "##D##########D########D##",
-    "#,,,,,,,#ff...ff#.......#",
-    "#,p,,,,,D.......#..fff..#",
-    "#,,,,,,,#...v...D.......#",
-    "#w,,,,,p#.......#p..w..f#",
-    "#########################",
-]
-COLS = len(MAP[0])
-ROWS = len(MAP)
-SOLID_TILES = set("#fspbwv")
-KITCHEN = [(c, r) for r in range(1, 5) for c in range(1, 8) if MAP[r][c] == ","]
+# --- locations ------------------------------------------------------------
+# The maps live in levels.py. use_level() switches the current one; the rest of
+# the code reads MAP, ROOMS, SWITCHES etc. from this module.
+import levels  # noqa: E402
+from levels import COLS, ROWS, LEVELS  # noqa: E402,F401
 
-CAT_SPAWN = (4, 12)
-FOX_SPAWN = (20, 2)
+SOLID_TILES = levels.SOLID
+LEVEL = MAP = ROOMS = KITCHEN = CAT_SPAWN = FOX_SPAWN = SWITCHES = None
+
+
+def room_of(c, r):
+    """Which room a cell belongs to (doors and walls take the room next to them)."""
+    for dc, dr in ((0, 0), (0, 1), (1, 0), (-1, 0), (0, -1)):
+        for name, c0, r0, c1, r1 in ROOMS:
+            if c0 <= c + dc <= c1 and r0 <= r + dr <= r1:
+                return name
+    return ROOMS[0][0]
+
+
+def use_level(name):
+    global LEVEL, MAP, ROOMS, KITCHEN, CAT_SPAWN, FOX_SPAWN, SWITCHES
+    LEVEL = LEVELS[name]
+    MAP = LEVEL["map"]
+    ROOMS = LEVEL["rooms"]
+    CAT_SPAWN = LEVEL["cat_spawn"]
+    FOX_SPAWN = LEVEL["fox_spawn"]
+    SWITCHES = LEVEL["switches"]
+    # KITCHEN = where the fox's snack (the roast chicken) shows up on this level
+    KITCHEN = [(c, r) for r in range(ROWS) for c in range(COLS)
+               if MAP[r][c] == "." and room_of(c, r) == LEVEL["food_room"]]
+
+
+use_level("ground")
 
 # --- balance ------------------------------------------------------------
 ROUND_TIME = 90.0        # the cat must survive this long...
@@ -80,14 +86,13 @@ DARK_WARN = 1.5
 
 JANIS_SPEED = 72         # Janis, the old gentleman: comes to switch the lights back on
 JANIS_DELAY = 2.0        # he shows up a moment after the lights go out
-JANIS_MIN_PATH = 8       # he comes from a door at least this far from a switch
+JANIS_MIN_PATH = 10      # he comes from a door at least this far from a switch
 JANIS_NOTICE = 110       # grabs anyone who comes this close
 JANIS_REACH = 24
 JANIS_HOLD = 2.0
 JANIS_KISS_CHANCE = 0.2  # 1 in 5: kisses the fox instead of grabbing it
 JANIS_KISS = 3.0         # the kissed fox is too flustered to move
 JANIS_IGNORE = 4.0       # after letting someone go he leaves them alone for a while
-SWITCHES = [(3, 6), (21, 6)]   # floor cells in front of the light switches in the hall
 
 VASE_DELAY = 2.5         # a smashed vase is loud: Janis or Yolanta come to check
 VASE_DOOR_MIN = 6        # ...from the nearest door at least this far from the shards
@@ -203,12 +208,15 @@ class Npc(Body):
 
 
 class Game:
-    def __init__(self, seed=None):
+    def __init__(self, seed=None, level=None):
         self.rng = random.Random(seed)
-        self.new_round()
+        self.new_round(level)
 
     # ------------------------------------------------------------------
-    def new_round(self):
+    def new_round(self, level=None):
+        if level:
+            use_level(level)
+        self.level = LEVEL["name"]
         self.doors, self.wardrobes, self.vases = {}, [], []
         for r, row in enumerate(MAP):
             for c, ch in enumerate(row):
@@ -346,6 +354,7 @@ class Game:
                 diff = (col + 0.5) * TILE - p.x
                 self._move_axis(p, math.copysign(min(abs(diff), step), diff), 0)
         p.moving = bool(mx or my)
+        p.anim_rate = speed / p.speed if p.speed else 1.0   # legs move faster when running faster
         if mx:
             p.facing = 1 if mx > 0 else -1
         return blocked
@@ -411,7 +420,7 @@ class Game:
     def _spawn_fish(self):
         dist_map, _ = self._bfs(cell_of(self.cat))
         taken = {cell_of(f) for f in self.fish}
-        cands = [c for c, d in dist_map.items() if d >= 6 and is_floor(*c) and c not in taken]
+        cands = [c for c, d in dist_map.items() if d >= 8 and is_floor(*c) and c not in taken]
         if cands:
             self.fish.append(Item(*cell_center(*self.rng.choice(cands))))
 
@@ -465,7 +474,7 @@ class Game:
 
         for b in [self.cat, self.fox] + self.npcs:
             if b.moving:
-                b.anim += dt
+                b.anim += dt * getattr(b, "anim_rate", 1.0)
 
         cat, fox = self.cat, self.fox
         if not cat.hidden and self.fox_free() and dist(cat, fox) < CATCH_DIST:

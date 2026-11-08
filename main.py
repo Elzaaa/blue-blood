@@ -4,17 +4,19 @@ Run on desktop:     python main.py
 Build for browser:  pygbag blueblood   (from the parent folder; see README)
 """
 import asyncio
+import sys
 import math
 import random
 
 import pygame
 
 import sprites
-from logic import (COLS, MAP, ROWS, TILE, BLACKCAT_COOLDOWN, DASH_COOLDOWN,
+import logic
+from logic import (COLS, ROWS, TILE, BLACKCAT_COOLDOWN, DASH_COOLDOWN,
                    FISH_WIN, FOX_HEARTS, GRAN_COOLDOWN, GRAN_HOLD, SCRATCH_TIME,
-                   SNIFF_TIME, WARD_MAX, JANIS_HOLD, JANIS_KISS, SWITCHES, Game, cell_center)
+                   SNIFF_TIME, WARD_MAX, JANIS_HOLD, JANIS_KISS, Game, cell_center)
 
-HUD_H = 52
+HUD_H = 48
 W, H = COLS * TILE, ROWS * TILE + HUD_H
 WINS_NEEDED = 3
 
@@ -35,311 +37,9 @@ CAT_COL = (222, 172, 128)
 FOX_COL = (255, 128, 48)
 PINK = (240, 140, 180)
 
-# --- manor: colors -----------------------------------------------------------
-GOLD = (222, 184, 92)
-GOLD_D = (150, 116, 50)
-WALL = (58, 40, 48)
-WALL_D = (46, 31, 38)
-DOOR_C = (120, 58, 44)      # mahogany
-DOOR_D = (74, 34, 28)
-
-WALLPAPER = {
-    "kitchen": (214, 200, 166), "salon": (52, 92, 76), "bedroom": (112, 44, 60),
-    "hall": (44, 56, 98), "bath": (176, 196, 206), "library": (40, 70, 52), "dining": (122, 40, 40),
-}
-PARQUET = {
-    "salon": ((198, 152, 98), (170, 126, 78)),
-    "dining": ((188, 140, 90), (160, 116, 72)),
-    "library": ((124, 82, 52), (100, 64, 40)),
-}
-# wall decorations: (column, wall row) -> what hangs there
-DECOR = {
-    (4, 0): "window", (11, 0): "portrait", (14, 0): "fireplace", (19, 0): "portrait", (22, 0): "window",
-    (2, 5): "portrait", (6, 5): "sconce", (8, 5): "portrait", (10, 5): "sconce", (14, 5): "sconce",
-    (16, 5): "portrait", (18, 5): "sconce", (22, 5): "portrait",
-    (5, 9): "mirror", (19, 9): "portrait", (18, 9): "sconce", (21, 9): "sconce",
-}
-FIREPLACES = [c for c, k in DECOR.items() if k == "fireplace"]
-FACE_H = 18   # height of the visible wallpapered wall face
-
-
-def room_of(c, r):
-    if r <= 4:
-        return "kitchen" if c <= 7 else "salon" if c <= 15 else "bedroom"
-    if r >= 10:
-        return "bath" if c <= 7 else "library" if c <= 15 else "dining"
-    return "hall"
-
-
-def shade(col, d):
-    return tuple(max(0, min(255, v + d)) for v in col)
-
-
-def draw_floor(surf, c, r):
-    x, y = c * TILE, r * TILE
-    room = room_of(c, r)
-    if room == "kitchen":      # terracotta tiles
-        for i in range(2):
-            for j in range(2):
-                col = (196, 108, 76) if (i + j) % 2 == 0 else (182, 96, 66)
-                pygame.draw.rect(surf, col, (x + i * 16, y + j * 16, 16, 16))
-                pygame.draw.rect(surf, (150, 80, 56), (x + i * 16, y + j * 16, 16, 16), 1)
-    elif room == "hall":       # marble checkerboard
-        for i in range(2):
-            for j in range(2):
-                light = (c * 2 + i + r * 2 + j) % 2 == 0
-                col = (232, 228, 220) if light else (58, 54, 66)
-                pygame.draw.rect(surf, col, (x + i * 16, y + j * 16, 16, 16))
-                if light and (c + r + i) % 3 == 0:
-                    pygame.draw.line(surf, (200, 196, 190), (x + i * 16 + 3, y + j * 16 + 12),
-                                     (x + i * 16 + 12, y + j * 16 + 5))
-    elif room == "bath":       # veined white marble
-        pygame.draw.rect(surf, (236, 238, 240), (x, y, TILE, TILE))
-        rnd = random.Random(c * 13 + r * 7)
-        for _ in range(2):
-            x1, y1 = x + rnd.randint(0, 31), y + rnd.randint(0, 31)
-            pygame.draw.line(surf, (204, 208, 216), (x1, y1),
-                             (min(x + 31, x1 + rnd.randint(4, 14)), min(y + 31, y1 + rnd.randint(-6, 8))))
-        pygame.draw.rect(surf, (214, 218, 224), (x, y, TILE, TILE), 1)
-    elif room == "bedroom":    # patterned carpet
-        pygame.draw.rect(surf, (118, 42, 58), (x, y, TILE, TILE))
-        for i in range(4):
-            for j in range(4):
-                if (i + j) % 2 == 0:
-                    pygame.draw.rect(surf, (142, 62, 74), (x + i * 8 + 3, y + j * 8 + 3, 2, 2))
-    else:                      # basket-weave parquet
-        light, dark = PARQUET[room]
-        for i in range(2):
-            for j in range(2):
-                bx, by = x + i * 16, y + j * 16
-                pygame.draw.rect(surf, light, (bx, by, 16, 16))
-                if (c * 2 + i + r * 2 + j) % 2 == 0:
-                    for k in (5, 10):
-                        pygame.draw.line(surf, dark, (bx, by + k), (bx + 15, by + k))
-                else:
-                    for k in (5, 10):
-                        pygame.draw.line(surf, dark, (bx + k, by), (bx + k, by + 15))
-                pygame.draw.rect(surf, dark, (bx, by, 16, 16), 1)
-
-
-def draw_rug(surf, rect, base, border, accent):
-    pygame.draw.rect(surf, border, rect)
-    inner = rect.inflate(-10, -10)
-    pygame.draw.rect(surf, base, inner)
-    pygame.draw.rect(surf, accent, inner.inflate(-6, -6), 1)
-    cx, cy = inner.center
-    s = min(inner.w, inner.h) // 3
-    pygame.draw.polygon(surf, accent, [(cx, cy - s), (cx + s * 1.4, cy), (cx, cy + s), (cx - s * 1.4, cy)], 2)
-    pygame.draw.polygon(surf, border, [(cx, cy - s // 2), (cx + s * 0.7, cy), (cx, cy + s // 2), (cx - s * 0.7, cy)])
-    for k in range(rect.x + 2, rect.right - 2, 4):     # fringe
-        pygame.draw.line(surf, (230, 220, 200), (k, rect.y - 3), (k, rect.y))
-        pygame.draw.line(surf, (230, 220, 200), (k, rect.bottom), (k, rect.bottom + 3))
-
-
-def draw_wall(surf, c, r):
-    x, y = c * TILE, r * TILE
-    pygame.draw.rect(surf, WALL, (x, y, TILE, TILE))
-    for k in range(0, TILE, 8):
-        pygame.draw.line(surf, WALL_D, (x, y + k), (x + TILE, y + k))
-    if r + 1 >= ROWS or MAP[r + 1][c] == "#":
-        return
-    paper = WALLPAPER[room_of(c, r + 1)]
-    fy = y + TILE - FACE_H
-    pygame.draw.rect(surf, paper, (x, fy, TILE, FACE_H))
-    for k in range(3, TILE, 6):
-        pygame.draw.line(surf, shade(paper, -16), (x + k, fy + 2), (x + k, y + TILE - 5))
-        pygame.draw.circle(surf, shade(paper, 14), (x + k, fy + 7), 1)
-    pygame.draw.line(surf, GOLD, (x, fy), (x + TILE, fy))
-    pygame.draw.rect(surf, (70, 40, 32), (x, y + TILE - 4, TILE, 4))     # skirting board
-    kind = DECOR.get((c, r))
-    if kind == "portrait":
-        rnd = random.Random(c * 7 + r)
-        fr = pygame.Rect(x + 8, fy - 6, 16, 19)
-        pygame.draw.rect(surf, GOLD, fr)
-        pygame.draw.rect(surf, GOLD_D, fr, 1)
-        inner = fr.inflate(-4, -4)
-        pygame.draw.rect(surf, rnd.choice([(40, 46, 70), (60, 36, 40), (36, 56, 44)]), inner)
-        pygame.draw.ellipse(surf, rnd.choice([(80, 60, 50), (210, 210, 220), (150, 110, 60)]),
-                            (inner.x + 2, inner.y + 1, inner.w - 4, 8))
-        pygame.draw.ellipse(surf, (236, 200, 170), (inner.x + 4, inner.y + 3, inner.w - 8, 7))
-        pygame.draw.rect(surf, rnd.choice([(30, 30, 40), (120, 40, 60), (40, 60, 120)]),
-                         (inner.x + 1, inner.y + 10, inner.w - 2, inner.h - 10))
-    elif kind == "sconce":
-        pygame.draw.rect(surf, GOLD, (x + 13, fy + 6, 6, 3))
-        pygame.draw.rect(surf, (250, 246, 230), (x + 15, fy + 1, 2, 5))
-        pygame.draw.circle(surf, (255, 220, 120), (x + 16, fy), 2)
-    elif kind == "window":
-        fr = pygame.Rect(x + 6, fy - 8, 20, 22)
-        pygame.draw.rect(surf, (70, 40, 32), fr)
-        pygame.draw.rect(surf, (156, 196, 232), fr.inflate(-4, -4))
-        pygame.draw.line(surf, (70, 40, 32), (fr.centerx, fr.y), (fr.centerx, fr.bottom))
-        pygame.draw.line(surf, (70, 40, 32), (fr.x, fr.centery), (fr.right, fr.centery))
-        pygame.draw.rect(surf, (140, 30, 46), (x + 2, fy - 9, 6, 24))     # curtains
-        pygame.draw.rect(surf, (140, 30, 46), (x + 24, fy - 9, 6, 24))
-        pygame.draw.line(surf, GOLD, (x + 1, fy - 10), (x + 31, fy - 10), 2)
-    elif kind == "mirror":
-        fr = pygame.Rect(x + 7, fy - 8, 18, 21)
-        pygame.draw.ellipse(surf, GOLD, fr)
-        pygame.draw.ellipse(surf, (200, 214, 226), fr.inflate(-5, -5))
-        pygame.draw.line(surf, (240, 246, 250), (fr.x + 7, fr.y + 6), (fr.x + 10, fr.y + 3), 2)
-    elif kind == "fireplace":
-        pygame.draw.rect(surf, (206, 196, 180), (x + 1, y + 6, 30, TILE - 6))
-        pygame.draw.rect(surf, (170, 160, 146), (x + 1, y + 6, 30, TILE - 6), 1)
-        pygame.draw.rect(surf, (226, 218, 204), (x - 1, y + 5, 34, 4))      # mantelpiece
-        pygame.draw.rect(surf, (24, 18, 18), (x + 8, y + 14, 16, TILE - 14))
-        pygame.draw.rect(surf, GOLD, (x + 7, y + 13, 18, 2))
-
-
-def run_len(c, r, ch):
-    n = 0
-    while c + n < COLS and MAP[r][c + n] == ch:
-        n += 1
-    return n
-
-
-def draw_furniture(surf, c, r, ch):
-    x, y = c * TILE, r * TILE
-    room = room_of(c, r)
-    if ch == "f" and room == "kitchen" and r == 1:            # marble countertop
-        pygame.draw.rect(surf, (226, 214, 184), (x, y, TILE, TILE - 2))
-        pygame.draw.rect(surf, (150, 130, 100), (x, y, TILE, TILE - 2), 1)
-        pygame.draw.rect(surf, (228, 228, 234), (x, y, TILE, 9))
-        pygame.draw.line(surf, (190, 190, 200), (x, y + 9), (x + TILE, y + 9))
-        pygame.draw.circle(surf, GOLD, (x + 16, y + 18), 2)
-        if c == 6:                                           # stove
-            pygame.draw.rect(surf, (40, 40, 46), (x + 2, y + 1, 28, 8))
-            pygame.draw.circle(surf, (90, 90, 100), (x + 9, y + 5), 3, 1)
-            pygame.draw.circle(surf, (90, 90, 100), (x + 22, y + 5), 3, 1)
-    elif ch == "f" and room == "kitchen":                    # kitchen table
-        pygame.draw.rect(surf, (90, 56, 34), (x + 3, y + 6, 26, 22))
-        pygame.draw.rect(surf, (156, 106, 64), (x + 3, y + 4, 26, 20))
-        pygame.draw.rect(surf, (240, 236, 226), (x + 9, y + 8, 14, 10), border_radius=3)
-        pygame.draw.ellipse(surf, (210, 160, 90), (x + 11, y + 9, 10, 7))
-    elif ch == "f" and room == "library":                    # bookshelf
-        rnd = random.Random(c * 5 + r)
-        sh = pygame.Rect(x + 1, y - 8, 30, TILE + 6)
-        pygame.draw.rect(surf, (64, 38, 26), sh)
-        for row in range(3):
-            yy = sh.y + 3 + row * 11
-            xx = sh.x + 3
-            while xx < sh.right - 4:
-                w = rnd.randint(2, 4)
-                h = rnd.randint(6, 9)
-                col = rnd.choice([(150, 40, 40), (40, 70, 130), (50, 110, 60), (190, 150, 60), (110, 60, 120)])
-                pygame.draw.rect(surf, col, (xx, yy + 9 - h, w, h))
-                xx += w + 1
-            pygame.draw.line(surf, (96, 60, 40), (sh.x, yy + 9), (sh.right - 1, yy + 9), 2)
-    elif ch == "f" and room == "dining" and r == 11:         # long dining table
-        if c > 0 and MAP[r][c - 1] == "f":
-            return
-        n = run_len(c, r, "f")
-        tab = pygame.Rect(x + 2, y + 2, n * TILE - 4, TILE - 4)
-        pygame.draw.rect(surf, (90, 50, 30), tab.move(0, 3))
-        pygame.draw.rect(surf, (246, 244, 238), tab, border_radius=3)
-        pygame.draw.line(surf, (214, 210, 200), (tab.x, tab.bottom - 3), (tab.right, tab.bottom - 3))
-        for k in range(n):
-            px = x + k * TILE + 16
-            pygame.draw.circle(surf, (230, 230, 236), (px, y + 9), 5)
-            pygame.draw.circle(surf, (200, 200, 210), (px, y + 9), 5, 1)
-            pygame.draw.circle(surf, (230, 230, 236), (px, y + 23), 5)
-            pygame.draw.circle(surf, (200, 200, 210), (px, y + 23), 5, 1)
-        cx = tab.centerx
-        pygame.draw.rect(surf, GOLD, (cx - 7, y + 15, 14, 3))
-        for dx in (-6, 0, 6):
-            pygame.draw.rect(surf, (250, 248, 236), (cx + dx - 1, y + 8, 2, 7))
-            pygame.draw.circle(surf, (255, 200, 80), (cx + dx, y + 7), 2)
-    elif ch == "f" and room == "salon":                      # armchair
-        pygame.draw.rect(surf, (30, 60, 46), (x + 4, y + 4, 24, 25), border_radius=6)
-        pygame.draw.rect(surf, (52, 110, 80), (x + 5, y + 3, 22, 23), border_radius=6)
-        pygame.draw.rect(surf, (40, 90, 64), (x + 5, y + 3, 22, 8), border_radius=6)
-        pygame.draw.rect(surf, (70, 136, 100), (x + 9, y + 12, 14, 10), border_radius=3)
-        pygame.draw.rect(surf, GOLD, (x + 6, y + 27, 3, 3))
-        pygame.draw.rect(surf, GOLD, (x + 23, y + 27, 3, 3))
-    elif ch == "f":                                          # chest of drawers
-        pygame.draw.rect(surf, (60, 28, 22), (x + 2, y + 4, 28, 26), border_radius=2)
-        pygame.draw.rect(surf, (118, 56, 42), (x + 3, y + 3, 26, 24), border_radius=2)
-        for k in (10, 18):
-            pygame.draw.line(surf, (80, 36, 28), (x + 4, y + k), (x + 27, y + k))
-            pygame.draw.circle(surf, GOLD, (x + 16, y + k + 4), 1)
-        pygame.draw.ellipse(surf, (210, 214, 224), (x + 8, y + 1, 16, 6))
-    elif ch == "v":                                          # marble pedestal
-        pygame.draw.rect(surf, (170, 170, 178), (x + 9, y + 26, 14, 4))
-        pygame.draw.rect(surf, (236, 236, 240), (x + 11, y + 14, 10, 13))
-        pygame.draw.line(surf, (200, 200, 208), (x + 15, y + 15), (x + 15, y + 25))
-        pygame.draw.ellipse(surf, (170, 170, 178), (x + 5, y + 11, 22, 7))
-        pygame.draw.ellipse(surf, (244, 244, 248), (x + 5, y + 10, 22, 6))
-    elif ch == "s":                                          # chesterfield sofa
-        pygame.draw.rect(surf, (70, 20, 30), (x - 6, y + 3, 44, 27), border_radius=7)
-        pygame.draw.rect(surf, (134, 36, 52), (x - 5, y + 2, 42, 24), border_radius=7)
-        pygame.draw.rect(surf, (112, 28, 44), (x - 5, y + 2, 42, 9), border_radius=7)
-        for k in range(4):
-            pygame.draw.circle(surf, (90, 22, 36), (x - 1 + k * 11, y + 16), 1)
-        pygame.draw.rect(surf, GOLD, (x - 3, y + 27, 3, 3))
-        pygame.draw.rect(surf, GOLD, (x + 32, y + 27, 3, 3))
-    elif ch == "b":                                          # canopy bed
-        if (c > 0 and MAP[r][c - 1] == "b") or (r > 0 and MAP[r - 1][c] == "b"):
-            return
-        w = run_len(c, r, "b")
-        h = 0
-        while MAP[r + h][c] == "b":
-            h += 1
-        bed = pygame.Rect(x + 2, y + 2, w * TILE - 4, h * TILE - 4)
-        pygame.draw.rect(surf, (60, 30, 22), bed)
-        pygame.draw.rect(surf, (238, 236, 230), bed.inflate(-6, -6))
-        blanket = pygame.Rect(bed.x + 3, bed.y + 24, bed.w - 6, bed.h - 27)
-        pygame.draw.rect(surf, (128, 30, 50), blanket)
-        pygame.draw.rect(surf, GOLD, blanket, 2)
-        pygame.draw.line(surf, GOLD, (blanket.x, blanket.y + 8), (blanket.right - 1, blanket.y + 8))
-        for k in range(2):
-            pygame.draw.rect(surf, (250, 250, 252), (bed.x + 6 + k * (bed.w // 2 - 2), bed.y + 6,
-                                                     bed.w // 2 - 10, 14), border_radius=4)
-        for px, py in ((bed.x, bed.y), (bed.right - 5, bed.y), (bed.x, bed.bottom - 5), (bed.right - 5, bed.bottom - 5)):
-            pygame.draw.rect(surf, (90, 46, 30), (px, py, 5, 5))
-            pygame.draw.circle(surf, GOLD, (px + 2, py + 2), 1)
-    elif ch == "p":                                          # palm in a porcelain pot
-        pygame.draw.rect(surf, (236, 238, 244), (x + 10, y + 19, 12, 11), border_radius=2)
-        pygame.draw.line(surf, (60, 90, 170), (x + 10, y + 23), (x + 21, y + 23), 2)
-        for a in range(7):
-            ang = math.pi + a * math.pi / 6
-            ex, ey = x + 16 + math.cos(ang) * 13, y + 16 + math.sin(ang) * 11
-            pygame.draw.line(surf, (40, 120, 60), (x + 16, y + 19), (ex, ey), 3)
-            pygame.draw.line(surf, (80, 170, 90), (x + 16, y + 19), (ex, ey), 1)
-
-
-def build_background():
-    bg = pygame.Surface((COLS * TILE, ROWS * TILE))
-    for r in range(ROWS):
-        for c in range(COLS):
-            if MAP[r][c] != "#":
-                draw_floor(bg, c, r)
-    # rugs
-    draw_rug(bg, pygame.Rect(10 * TILE + 4, 2 * TILE + 2, 5 * TILE - 8, 3 * TILE - 6),
-             (140, 36, 44), (40, 50, 100), GOLD)
-    draw_rug(bg, pygame.Rect(18 * TILE + 2, 10 * TILE + 8, 5 * TILE - 4, 3 * TILE - 16),
-             (40, 56, 110), (120, 30, 40), GOLD)
-    runner = pygame.Rect(TILE, 7 * TILE + 6, (COLS - 2) * TILE, TILE - 12)
-    pygame.draw.rect(bg, (146, 30, 42), runner)
-    pygame.draw.rect(bg, GOLD, runner.inflate(0, -4), 1)
-    for r in range(ROWS):
-        for c in range(COLS):
-            if MAP[r][c] == "#":
-                draw_wall(bg, c, r)
-    for r in range(ROWS):
-        for c in range(COLS):
-            if MAP[r][c] in "fvspb":
-                draw_furniture(bg, c, r, MAP[r][c])
-    return bg
-
-
-def draw_fire(surf, t):
-    for c, r in FIREPLACES:
-        x, y = c * TILE + 16, r * TILE + HUD_H + TILE - 3
-        for k in range(3):
-            h = 7 + math.sin(t * 13 + k * 2.1) * 3
-            col = [(255, 120, 30), (255, 180, 50), (255, 240, 150)][k]
-            w = 6 - k * 2
-            pygame.draw.polygon(surf, col, [(x - w - 1, y), (x + w + 1, y), (x + math.sin(t * 9 + k) * 2, y - h + k * 2)])
-
+# --- the manor is drawn in manor.py ---------------------------------------
+import manor  # noqa: E402
+from manor import DOOR_C, DOOR_D, GOLD, build_background, draw_fire  # noqa: E402
 
 
 # --- the original "House" look (toggle with T in the menu) -----------------
@@ -349,6 +49,7 @@ MANOR_DOOR = (DOOR_C, DOOR_D, GOLD)
 
 
 def build_background_classic():
+    MAP = logic.MAP
     wood, wood_d = (214, 186, 140), (190, 160, 116)
     tile_a, tile_b = (206, 210, 220), (178, 186, 202)
     wall, wall_top = (66, 54, 78), (104, 88, 120)
@@ -390,7 +91,7 @@ def build_background_classic():
                     pygame.draw.line(bg, wood_d, (x, yy), (x + TILE, yy))
                     off = rnd.randint(0, TILE)
                     pygame.draw.line(bg, wood_d, (x + off, yy), (x + off, yy + 8))
-            if ch == "f":
+            if ch in "fktoTLBdaPruxcSIRbheygHn":
                 pygame.draw.rect(bg, (60, 40, 24), (x + 2, y + 4, 28, 26), border_radius=3)
                 pygame.draw.rect(bg, (140, 92, 52), (x + 3, y + 3, 26, 24), border_radius=3)
                 pygame.draw.rect(bg, (176, 124, 76), (x + 3, y + 3, 26, 6), border_radius=3)
@@ -463,13 +164,13 @@ def draw_wardrobe(surf, w, i, t, rustle):
         if w.sniff > 0:
             bar(surf, x, y - 20, TILE, 5, w.sniff / SNIFF_TIME, FOX_COL)
         return
-    pygame.draw.rect(surf, (54, 22, 18), body, border_radius=2)
-    pygame.draw.rect(surf, (116, 50, 38), body.inflate(-4, -4), border_radius=2)
-    pygame.draw.rect(surf, (140, 66, 50), (body.x + 1, body.y, body.w - 2, 6))
+    pygame.draw.rect(surf, (72, 50, 34), body, border_radius=2)
+    pygame.draw.rect(surf, (138, 100, 68), body.inflate(-4, -4), border_radius=2)
+    pygame.draw.rect(surf, (158, 120, 84), (body.x + 1, body.y, body.w - 2, 6))
     pygame.draw.line(surf, GOLD, (body.x + 1, body.y + 6), (body.right - 2, body.y + 6))
     for px in (body.x + 4, body.centerx + 2):
-        pygame.draw.rect(surf, (96, 40, 30), (px, body.y + 10, 10, body.h - 15), 1)
-    pygame.draw.line(surf, (54, 22, 18), (body.centerx, body.y + 8), (body.centerx, body.bottom - 3), 2)
+        pygame.draw.rect(surf, (106, 76, 50), (px, body.y + 10, 10, body.h - 15), 1)
+    pygame.draw.line(surf, (72, 50, 34), (body.centerx, body.y + 8), (body.centerx, body.bottom - 3), 2)
     pygame.draw.circle(surf, GOLD, (body.centerx - 3, body.centery + 4), 2)
     pygame.draw.circle(surf, GOLD, (body.centerx + 3, body.centery + 4), 2)
     if w.sniff > 0:
@@ -543,6 +244,7 @@ class Match:
         self.round = 1
         self.done = False
         self.last = None
+        self.level = random.choice(list(logic.LEVELS))
 
     def player_of(self, role):
         return self.cat_player if role == "cat" else 1 - self.cat_player
@@ -555,6 +257,8 @@ class Match:
     def next_round(self):
         self.cat_player = 1 - self.cat_player
         self.round += 1
+        # a new random location, never the same one twice in a row
+        self.level = random.choice([n for n in logic.LEVELS if n != self.level])
 
     def inputs(self, held, keys):
         return {"cat": read_side(held, keys, self.cat_player),
@@ -563,46 +267,90 @@ class Match:
 
 # --- rendering --------------------------------------------------------------
 class Renderer:
-    def __init__(self, screen):
-        self.screen = screen
-        self.bgs = {"manor": build_background(), "classic": build_background_classic()}
+    def __init__(self, window):
+        # The game is drawn on a 1280x720 canvas and scaled up to the real window without blur.
+        # All text is collected and drawn at the window's full resolution on top, so it stays sharp.
+        self.window = window
+        self.screen = pygame.Surface((W, H))
+        self.texts = []
+        self._font_sizes = {}
+        self._hi_fonts = {}
+        self.bgs = {}     # (style, level) -> background, built on demand
         self.spr = sprites.load_all()
         self.spr["yolanta"] = self.spr["gran"]     # Yolanta as a house resident (vase noise)
-        self.f_tiny = pygame.font.Font(None, 19)
-        self.f_small = pygame.font.Font(None, 22)
-        self.f_mid = pygame.font.Font(None, 30)
-        self.f_big = pygame.font.Font(None, 56)
-        self.f_huge = pygame.font.Font(None, 120)
+        self.f_tiny = self.font(19)
+        self.f_small = self.font(22)
+        self.f_mid = self.font(30)
+        self.f_big = self.font(56)
+        self.f_huge = self.font(120)
+        self.f_title = self.font(92)
         self.fx = Particles()
         self.popups = []
         self.trail = []
         self.shake = 0.0
         self.t = 0.0
         self.heart_t = 0.0
+        self.idle = {}        # how long each character has been standing still
         self.fish_icon = pygame.transform.scale(self.spr["fish"], (18, 10))
         self.fish_icon_dim = self.fish_icon.copy()
         self.fish_icon_dim.set_alpha(60)
 
     @property
     def bg(self):
-        return self.bgs[STYLE["name"]]
+        key = (STYLE["name"], logic.LEVEL["name"])
+        if key not in self.bgs:
+            self.bgs[key] = build_background() if key[0] == "manor" else build_background_classic()
+        return self.bgs[key]
+
+    def font(self, size):
+        f = pygame.font.Font(None, size)
+        self._font_sizes[id(f)] = size
+        return f
 
     def text(self, s, font, color, center=None, topleft=None, shadow=True):
-        img = font.render(s, True, color)
-        rect = img.get_rect()
+        """Queue text; it's drawn sharp at full resolution in present()."""
+        w, h = font.size(s)
+        rect = pygame.Rect(0, 0, w, h)
         if center:
             rect.center = center
         if topleft:
             rect.topleft = topleft
-        if shadow:
-            self.screen.blit(font.render(s, True, (20, 16, 24)), rect.move(2, 2))
-        self.screen.blit(img, rect)
+        self.texts.append((s, self._font_sizes.get(id(font), 24), color, rect, bool(topleft), shadow))
         return rect
+
+    def present(self):
+        """Scale the canvas to the window (no blur) and draw the queued text on top, sharp."""
+        win = self.window
+        ww, wh = win.get_size()
+        scale = min(ww / W, wh / H)
+        sw, sh = max(1, int(W * scale)), max(1, int(H * scale))
+        ox, oy = (ww - sw) // 2, (wh - sh) // 2
+        win.fill((0, 0, 0))
+        if (sw, sh) == (W, H):
+            win.blit(self.screen, (ox, oy))
+        else:
+            win.blit(pygame.transform.scale(self.screen, (sw, sh)), (ox, oy))
+        off = max(1, round(2 * scale))
+        for s, size, color, rect, left, shadow in self.texts:
+            px = max(6, round(size * scale))
+            f = self._hi_fonts.get(px)
+            if f is None:
+                f = self._hi_fonts[px] = pygame.font.Font(None, px)
+            img = f.render(s, True, color)
+            if left:
+                r = img.get_rect(topleft=(ox + round(rect.x * scale), oy + round(rect.y * scale)))
+            else:
+                r = img.get_rect(center=(ox + round(rect.centerx * scale), oy + round(rect.centery * scale)))
+            if shadow:
+                win.blit(f.render(s, True, (20, 16, 24)), r.move(off, off))
+            win.blit(img, r)
+        self.texts.clear()
 
     def popup(self, s, x, y, col):
         self.popups.append([s, x, y, 1.0, col])
 
     def reset(self):
+        self.idle.clear()
         self.fx.items.clear()
         self.popups.clear()
         self.trail.clear()
@@ -682,10 +430,33 @@ class Renderer:
                 self.fx.burst(x, y, (255, 255, 255), 30, 200, 1.0, 3)
                 self.shake = 0.5
 
-    def draw_body(self, b, key, alpha=None):
+    def draw_body(self, b, key, alpha=None, dt=0.0, closed_eyes=False):
         frames = self.spr[key][b.facing]
-        frame = frames[int(b.anim * 8) % 2] if b.moving else frames[0]
-        bob = -abs(int(math.sin(b.anim * 16) * 2)) if b.moving else 0
+        poses = self.spr.get(key + "_pose", {}).get(b.facing)
+        bid = id(b)
+        idle = self.idle.get(bid, 0.0)
+        idle = 0.0 if b.moving else idle + dt
+        self.idle[bid] = idle
+        phase = (bid % 97) / 97.0                       # so the characters don't blink in sync
+        bob = 0
+        if b.moving:
+            if len(frames) > 2:                         # frame 0 = standing, the rest = walk cycle
+                frame = frames[1 + int(b.anim * 10) % (len(frames) - 1)]
+            else:
+                frame = frames[int(b.anim * 8) % 2]
+            bob = -abs(int(math.sin(b.anim * 16) * 2))
+        elif poses:
+            blink = closed_eyes or (self.t + phase * 3) % 3.4 < 0.14
+            if idle > 2.5:                              # sat down after standing for a while
+                frame = poses["sit_blink" if blink else "sit"]
+            elif (self.t + phase * 5) % 4.0 < 0.35:     # a little tail flick
+                frame = poses["tail"]
+            else:
+                frame = poses["stand_blink" if blink else "stand"]
+            if math.sin(self.t * 2.6 + phase * 6) > 0.7:    # breathing
+                bob = -1
+        else:
+            frame = frames[0]
         x, y = int(b.x), int(b.y) + HUD_H
         sw = max(24, frame.get_width() - 8)
         sh = pygame.Surface((sw, 8), pygame.SRCALPHA)
@@ -715,13 +486,13 @@ class Renderer:
         dark = pygame.Surface((W, H - HUD_H), pygame.SRCALPHA)
         base = 238
         dark.fill((5, 5, 15, base))
-        lights = [(g.fox, 95)]
+        lights = [(g.fox, 110)]
         if not g.cat.hidden:
-            lights.append((g.cat, 95))
+            lights.append((g.cat, 110))
         lights += [(n, 85 if n.kind == "janis" else 55) for n in g.npcs]
         lights += [(f, 20) for f in g.fish]
         if STYLE["name"] == "manor":
-            lights += [(Spot(*cell_center(c, r + 1)), 60) for c, r in FIREPLACES]
+            lights += [(Spot(*cell_center(c, r + 1)), 60) for c, r in manor.fireplaces()]
         steps = 6
         for i in range(steps):
             a = int(base * (steps - 1 - i) / steps)
@@ -731,6 +502,7 @@ class Renderer:
         self.screen.blit(dark, (0, HUD_H))
 
     def draw_game(self, g, m, dt, state):
+        self.texts.clear()
         self.t += dt
         self.fx.update(dt)
         self.shake = max(0.0, self.shake - dt)
@@ -744,8 +516,8 @@ class Renderer:
         for d in g.doors.values():
             draw_door(scr, d, self.t)
         if STYLE["name"] == "manor":
-            draw_fire(scr, self.t)
-        for c, r in SWITCHES:                       # light switches on the hall wall
+            draw_fire(scr, self.t, HUD_H)
+        for c, r in logic.SWITCHES:                 # light switches on the wall
             sx, sy = c * TILE + 11, (r - 1) * TILE + HUD_H + TILE - 16
             pygame.draw.rect(scr, (60, 50, 50), (sx - 1, sy - 1, 12, 14))
             pygame.draw.rect(scr, (236, 228, 206), (sx, sy, 10, 12))
@@ -787,7 +559,7 @@ class Renderer:
             alpha = None
             if key in ("blackcat", "gran") and b.life < 1.5 and b.holding <= 0:
                 alpha = 255 if int(self.t * 10) % 2 else 110
-            r = self.draw_body(b, key, alpha)
+            r = self.draw_body(b, key, alpha, dt, closed_eyes=(key == "fox" and g.fox.kiss > 0))
             if key == "fox":
                 if g.fox.stun > 0:
                     self.stars(int(b.x), r.top)
@@ -827,7 +599,8 @@ class Renderer:
         if state == "play" and g.countdown > 0:
             self.overlay(110)
             cat_p, fox_p = m.cat_player, 1 - m.cat_player
-            self.text(f"Round {m.round}", self.f_big, (255, 255, 255), center=(W // 2, H // 2 - 110))
+            self.text(f"Round {m.round}", self.f_big, (255, 255, 255), center=(W // 2, H // 2 - 150))
+            self.text(logic.LEVEL["title"], self.f_mid, (236, 222, 190), center=(W // 2, H // 2 - 110))
             self.text(f"{PLAYER[cat_p]} ({SIDES[cat_p]['names'][0]}) — CAT", self.f_mid, CAT_COL,
                       center=(W // 2, H // 2 - 65))
             self.text(f"{PLAYER[fox_p]} ({SIDES[fox_p]['names'][0]}) — FOX", self.f_mid, FOX_COL,
@@ -936,6 +709,7 @@ class Renderer:
                          GRAN_COOLDOWN, active=g.npc("gran") is not None)
 
     def draw_menu(self, dt):
+        self.texts.clear()
         self.t += dt
         scr = self.screen
         scr.blit(self.bg, (0, HUD_H))
@@ -948,7 +722,7 @@ class Renderer:
             scr.blit(img, img.get_rect(midbottom=(cx, by)))
 
         # title
-        title = pygame.font.Font(None, 92)
+        title = self.f_title
         bob = math.sin(self.t * 2) * 3
         r = self.text("BLUE BLOOD", title, (120, 160, 255), center=(W // 2, 58 + bob))
         pygame.draw.line(scr, (230, 196, 90), (r.left + 10, r.bottom + 2), (r.right - 10, r.bottom + 2), 2)
@@ -960,7 +734,7 @@ class Renderer:
         self.text("the cat runs, the fox chases · roles swap every round · first to 3 wins",
                   self.f_small, (235, 235, 235), center=(W // 2, 122))
 
-        lx, rx, y0 = 50, W // 2 + 20, 148
+        lx, rx, y0 = W // 2 - 460, W // 2 + 70, 148
         self.text("CAT", self.f_mid, CAT_COL, topleft=(lx, y0))
         for i, s in enumerate(["Survive 1:30 or collect 5 fish",
                                "Action: door / vase / wardrobe",
@@ -974,7 +748,7 @@ class Renderer:
         for i, s in enumerate(["Catch the cat! You have 3 hearts",
                                "Action: dash",
                                "Wait at a wardrobe to sniff out the cat",
-                               "Chicken in the kitchen makes you faster",
+                               "Roast chicken somewhere makes you faster",
                                "You can scratch through closed doors",
                                "Perk: Yolanta — grabs the cat",
                                "   and holds it while you run over"]):
@@ -988,15 +762,39 @@ class Renderer:
                       self.f_small, (200, 220, 255), center=(W // 2, y0 + 236 + i * 24))
 
         style = "Manor" if STYLE["name"] == "manor" else "House"
-        self.text(f"T — style: {style}", self.f_small, (190, 190, 200), center=(W // 2, H - 62))
+        self.text(f"T — style: {style}    ·    F11 — fullscreen / window", self.f_small, (190, 190, 200),
+                  center=(W // 2, H - 62))
         if int(self.t * 2) % 2 == 0:
             self.text("Press ENTER to start", self.f_mid, (255, 255, 160), center=(W // 2, H - 30))
 
 
+def make_window(fullscreen):
+    if sys.platform == "emscripten":              # browser build
+        return pygame.display.set_mode((W, H))
+    if fullscreen:                                # the real screen resolution
+        return pygame.display.set_mode((0, 0), pygame.FULLSCREEN)
+    return pygame.display.set_mode((W, H), pygame.RESIZABLE)
+
+
+def dpi_aware():
+    """On Windows with display scaling (125%, 150%...) stop the system from blurring the window."""
+    if sys.platform == "win32":
+        try:
+            import ctypes
+            try:
+                ctypes.windll.shcore.SetProcessDpiAwareness(2)
+            except Exception:
+                ctypes.windll.user32.SetProcessDPIAware()
+        except Exception:
+            pass
+
+
 async def main():
+    dpi_aware()
     pygame.init()
     pygame.display.set_caption("Blue Blood")
-    screen = pygame.display.set_mode((W, H))
+    fullscreen = True
+    screen = make_window(fullscreen)
     clock = pygame.time.Clock()
     rnd = Renderer(screen)
     game = Game()
@@ -1012,6 +810,9 @@ async def main():
                 pygame.quit()
                 return
             if e.type == pygame.KEYDOWN:
+                if e.scancode == pygame.KSCAN_F11 and sys.platform != "emscripten":
+                    fullscreen = not fullscreen
+                    rnd.window = make_window(fullscreen)
                 keys_down.add(e.scancode)
                 held.add(e.scancode)
             elif e.type == pygame.KEYUP:
@@ -1023,7 +824,8 @@ async def main():
             if pygame.KSCAN_T in keys_down:
                 STYLE["name"] = "classic" if STYLE["name"] == "manor" else "manor"
             if pygame.KSCAN_RETURN in keys_down:
-                game, match = Game(), Match()
+                match = Match()
+                game = Game(level=match.level)
                 rnd.reset()
                 state = "play"
             rnd.draw_menu(dt)
@@ -1049,13 +851,14 @@ async def main():
                     match = Match()
                 else:
                     match.next_round()
-                game.new_round()
+                game.new_round(match.level)
                 rnd.reset()
                 state = "play"
             elif pygame.KSCAN_ESCAPE in keys_down:
                 state = "menu"
             rnd.draw_game(game, match, dt, state)
 
+        rnd.present()
         pygame.display.flip()
         await asyncio.sleep(0)  # required for the browser build (pygbag)
 

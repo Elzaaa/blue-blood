@@ -23,8 +23,8 @@ PALETTE = {
     "k": (40, 30, 30),
     "e": (30, 24, 20),
     # black cat
-    "N": (54, 48, 62),
-    "n": (32, 28, 38),
+    "N": (66, 60, 76),
+    "n": (44, 40, 52),
     "Y": (250, 214, 60),
     "p": (180, 110, 130),
     # grandma
@@ -61,53 +61,162 @@ PALETTE = {
 }
 OUTLINE = (28, 22, 30)
 
-# Cat: brown, striped, white socks. Faces right.
-CAT_0 = [
-    "...........O...O",
-    "..O.......OoOoO.",
-    "..o.......OEOOE.",
-    "..O.......OOOOOP",
-    "...o.....OOWWWO.",
-    "...OOOOOOOOOWWO.",
-    "...OoOOoOOoOOW..",
-    "...OoOOoOOoOOW..",
-    "...OOoOOoOOoOO..",
-    "...OO.OO..OO.OO.",
-    "...WW.WW..WW.WW.",
-    "...WW.WW..WW.WW.",
+# Kitten: brown, striped, white socks. Faces right. A big head, a small body and short thin
+# legs (shorter than the fox's). Frame 0 = standing, frames 1-4 = walk cycle.
+_KITTEN_TOP = [
+    ".........O....O",
+    ".........OO..OO",
+    ".o.......OOOOOO",
+    ".O.......OEOOEO",
+    ".O.......OOOOOP",
+    "..O......OOWWO.",
+    "..OoOOoOOoOWW..",
+    "..OoOOoOOoOW...",
+    "..OOOOOOOOOO...",
 ]
-CAT_1 = CAT_0[:9] + [
-    "....OO.OO.OO.OO.",
-    "....WW.WW.WW.WW.",
-    "....WW.WW.WW.WW.",
+_KITTEN_TAIL_B = [                      # tail swung back a little
+    ".........O....O",
+    ".........OO..OO",
+    "o........OOOOOO",
+    ".O.......OEOOEO",
+    ".O.......OOOOOP",
+    "..O......OOWWO.",
 ]
+_KITTEN_LEGS = [
+    ["..O.O....O.O...", "..W.W....W.W..."],     # standing
+    [".O..O...O..O...", ".W..W...W..W..."],     # stride
+    ["...OO....OO....", "...WW....WW...."],     # passing
+    ["..O..O...O..O..", "..W..W...W..W.."],     # stride, other legs
+    ["...OO....OO....", "...WW....WW...."],     # passing
+]
+CAT_FRAMES = []
+for _i, _legs in enumerate(_KITTEN_LEGS):
+    _top = (_KITTEN_TAIL_B + _KITTEN_TOP[6:]) if _i in (2, 3) else _KITTEN_TOP
+    CAT_FRAMES.append(_top + _legs)
+CAT_0, CAT_1 = CAT_FRAMES[0], CAT_FRAMES[1]
 
 # Fox: orange, white chest and tail tip, black paws.
-FOX_0 = [
-    "...........k..k.",
-    "...........F..F.",
+_FOX_TOP = [
+    "..........k...k.",
+    "..........FF.FF.",
+    "..........FF.FF.",
     "..........FFFFF.",
     "..........FeFFFF",
     ".W........FFWWWk",
-    "WWF.......FWWW..",
-    "WFFF.....FFWW...",
-    ".FFFFFFFFFFWWF..",
-    "..FFFFFFFFFFFFF.",
-    "...ffFFFFFFFFff.",
-    "...f...f..f...f.",
-    "...f...f..f...f.",
-    "...k...k..k...k.",
+    "WWF.......FFWW..",
+    "WFFF......FWWW..",
+    ".FFFFFFFFFFWWW..",
+    "..FFFFFFFFFFFF..",
+    "...ffFFFFFFFff..",
 ]
-FOX_1 = FOX_0[:10] + [
-    "....f.f....f.f..",
-    "....f.f....f.f..",
-    "....k.k....k.k..",
+_FOX_TAIL_B = [                         # tail swung up a little
+    "..........k...k.",
+    "..........FF.FF.",
+    "..........FF.FF.",
+    "..........FFFFF.",
+    "W.........FeFFFF",
+    "WW........FFWWWk",
+    "WFF.......FFWW..",
+    ".FFF......FWWW..",
+]
+_FOX_LEGS = [
+    ["...f...f..f..f..", "...f...f..f..f..", "...k...k..k..k.."],     # standing
+    ["..f...f...f...f.", "..f...f...f...f.", "..k...k...k...k."],     # stride
+    ["....ff.....ff...", "....ff.....ff...", "....kk.....kk..."],     # passing
+    ["...f..f....f..f.", "...f..f....f..f.", "...k..k....k..k."],     # stride, other legs
+    ["....ff.....ff...", "....ff.....ff...", "....kk.....kk..."],     # passing
+]
+FOX_FRAMES = []
+for _i, _legs in enumerate(_FOX_LEGS):
+    _top = (_FOX_TAIL_B + _FOX_TOP[8:]) if _i in (2, 3) else _FOX_TOP
+    FOX_FRAMES.append(_top + _legs)
+FOX_0, FOX_1 = FOX_FRAMES[0], FOX_FRAMES[1]
+
+# Sitting poses (after standing still for a moment): tail wrapped round the paws.
+FOX_SIT = [
+    "..........k...k.",
+    "..........FF.FF.",
+    "..........FF.FF.",
+    "..........FFFFF.",
+    "..........FeFFFF",
+    "..........FFWWWk",
+    ".........FFWWW..",
+    "........FFFWWW..",
+    ".......FFFFWWW..",
+    ".......FFFFFFF..",
+    "......FFFFFFFF..",
+    "...WWFFFFFFkFk..",
+]
+CAT_SIT = [
+    ".........O....O",
+    ".........OO..OO",
+    ".........OOOOOO",
+    ".........OEOOEO",
+    ".........OOOOOP",
+    ".........OOWWO.",
+    "........OOOWW..",
+    ".......OOoOWW..",
+    "......OOOoOOW..",
+    "......OOOOOOW..",
+    "....ooOOOOOWW..",
 ]
 
-# Black cat: the same cat silhouette, recolored and 1.5x bigger.
-_BLACK = str.maketrans({"O": "N", "o": "n", "W": "N", "E": "Y", "P": "p"})
-BLACKCAT_0 = [r.translate(_BLACK) for r in CAT_0]
-BLACKCAT_1 = [r.translate(_BLACK) for r in CAT_1]
+# Black cat: the same cute style as the kitten, but grown-up and the size of the fox.
+# Big round head, upright ears, yellow eyes, a pink nose.
+_BLACK_TOP = [
+    ".........N....N.",
+    ".........NN..NN.",
+    ".n.......NNNNNN.",
+    ".N.......NNNNNN.",
+    ".N.......NYNNYN.",
+    "..N......NNNNNp.",
+    "..NNNNNNNNNNNN..",
+    "..NNNNNNNNNNNN..",
+    "..NNNNNNNNNNNN..",
+    "...nnnnnnnnnnn..",
+]
+_BLACK_TAIL_B = [
+    ".........N....N.",
+    ".........NN..NN.",
+    "n........NNNNNN.",
+    ".N.......NNNNNN.",
+    ".N.......NYNNYN.",
+    "..N......NNNNNp.",
+]
+_BLACK_LEGS = [
+    ["...N..N...N..N..", "...N..N...N..N..", "...N..N...N..N.."],
+    ["..N...N..N...N..", "..N....N.N....N.", ".N.....N.N.....N"],
+    ["....NN....NN....", "....NN....NN....", "....NN....NN...."],
+    ["...N...N..N...N.", "...N....N.N....N", "...N....NN.....N"],
+    ["....NN....NN....", "....NN....NN....", "....NN....NN...."],
+]
+BLACKCAT_FRAMES = []
+for _i, _legs in enumerate(_BLACK_LEGS):
+    _top = (_BLACK_TAIL_B + _BLACK_TOP[6:]) if _i in (2, 3) else _BLACK_TOP
+    BLACKCAT_FRAMES.append(_top + _legs)
+BLACKCAT_0, BLACKCAT_1 = BLACKCAT_FRAMES[0], BLACKCAT_FRAMES[1]
+BLACKCAT_SIT = [
+    ".........N....N.",
+    ".........NN..NN.",
+    ".........NNNNNN.",
+    ".........NYNNYN.",
+    ".........NNNNNp.",
+    ".........NNNNN..",
+    "........NNNNNN..",
+    ".......NNNNNNN..",
+    "......NNNNNNNN..",
+    "......NNNNNNNN..",
+    "....NNNNNNNNNN..",
+    "...nnnnnnnnnnn..",
+]
+
+# Extra poses for the idle animation. Blinking frames are made by closing the eyes.
+POSES = {
+    "cat": {"sit": CAT_SIT, "tail": _KITTEN_TAIL_B + _KITTEN_TOP[6:] + _KITTEN_LEGS[0]},
+    "blackcat": {"sit": BLACKCAT_SIT, "tail": _BLACK_TAIL_B + _BLACK_TOP[6:] + _BLACK_LEGS[0]},
+    "fox": {"sit": FOX_SIT, "tail": _FOX_TAIL_B + _FOX_TOP[8:] + _FOX_LEGS[0]},
+}
+EYES = {"cat": ("E", "O"), "blackcat": ("Y", "N"), "fox": ("e", "F")}   # eye colour -> fur colour
 
 # Grandma: elegant pastel suit, matching hat, pearls, handbag.
 GRAN_0 = [
@@ -259,23 +368,31 @@ def _load(name, rows, scale, outline=OUTLINE):
 def load_all():
     s = {}
     chars = (
-        ("cat", (CAT_0, CAT_1), 2, OUTLINE),
-        ("fox", (FOX_0, FOX_1), 2, OUTLINE),
-        ("blackcat", (BLACKCAT_0, BLACKCAT_1), 3, (120, 96, 150)),
+        ("cat", CAT_FRAMES, 2, OUTLINE),
+        ("fox", FOX_FRAMES, 2, OUTLINE),
+        ("blackcat", BLACKCAT_FRAMES, 2, OUTLINE),
         ("gran", (GRAN_0, GRAN_1), 2, OUTLINE),
         ("janis", (JANIS_0, JANIS_1), 2, OUTLINE),
     )
     for key, rows, scale, outline in chars:
         frames = [_load(f"{key}_{i}", r, scale, outline) for i, r in enumerate(rows)]
         s[key] = {1: frames, -1: [pygame.transform.flip(f, True, False) for f in frames]}
+    stands = {"cat": CAT_FRAMES[0], "blackcat": BLACKCAT_FRAMES[0], "fox": FOX_FRAMES[0]}
+    for key, poses in POSES.items():
+        eye, fur = EYES[key]
+        rows = dict(poses, stand=stands[key])
+        for name in ("stand", "sit"):
+            rows[name + "_blink"] = [r.replace(eye, fur) for r in rows[name]]
+        surfs = {name: _load(f"{key}_{name}", rr, 2) for name, rr in rows.items()}
+        s[key + "_pose"] = {1: surfs, -1: {n: pygame.transform.flip(f, True, False) for n, f in surfs.items()}}
     s["star"] = _from_rows(STAR, 2)
     s["fish"] = _from_rows(FISH, 2)
     s["chicken"] = _from_rows(CHICKEN, 2)
     s["vase"] = _from_rows(VASE, 2)
     s["heart"] = _from_rows(HEART, 2)
     s["heart_empty"] = _from_rows(HEART_EMPTY, 2)
-    s["cat_icon"] = pygame.transform.scale(s["cat"][1][0], (28, 24))
+    s["cat_icon"] = pygame.transform.scale(s["cat"][1][0], (28, 22))
     s["fox_icon"] = pygame.transform.scale(s["fox"][1][0], (28, 22))
-    s["blackcat_icon"] = pygame.transform.scale(s["blackcat"][1][0], (20, 17))
+    s["blackcat_icon"] = pygame.transform.scale(s["blackcat"][1][0], (22, 17))
     s["gran_icon"] = pygame.transform.scale(s["gran"][1][0], (14, 20))
     return s
