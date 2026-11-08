@@ -6,6 +6,7 @@ It listens on port 8765 (or $PORT if set, e.g. on a cloud host).
 Players open the game, choose "Play online" and type this server's address.
 """
 import asyncio
+import http
 import json
 import os
 import random
@@ -146,9 +147,17 @@ async def ticker():
         await asyncio.sleep(max(0.0, TICK - (time.perf_counter() - t0)))
 
 
+def process_request(connection, request):
+    """Opening the server address in a browser shows a short note instead of an error
+    (handy to check it's up, and it wakes a sleeping free cloud server)."""
+    if request.headers.get("Upgrade", "").lower() != "websocket":
+        return connection.respond(http.HTTPStatus.OK, "Blue Blood server is running.\n")
+    return None
+
+
 async def main():
     port = int(os.environ.get("PORT", net.PORT))
-    async with websockets.serve(handler, "0.0.0.0", port):
+    async with websockets.serve(handler, "0.0.0.0", port, process_request=process_request):
         print(f"Blue Blood server is running on port {port}. Press Ctrl+C to stop.")
         await ticker()
 

@@ -1,0 +1,9 @@
+# Render.com blueprint: runs the Blue Blood online server.
+# render.com -> New -> Blueprint -> pick this repository -> Apply.
+services:
+  - type: web
+    name: blue-blood
+    runtime: python
+    plan: free
+    buildCommand: pip install -r requirements-server.txt
+    startCommand: python server.py

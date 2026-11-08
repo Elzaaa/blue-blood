@@ -331,6 +331,7 @@ class NetClient:
         self.snap = None
         self.events = []
         self.out = asyncio.Queue()
+        self.started = None
         self.task = asyncio.ensure_future(self.run())
 
     async def run(self):
@@ -340,7 +341,9 @@ class NetClient:
             self.status, self.error = "error", "Install the network library first:  pip install websockets"
             return
         try:
-            async with websockets.connect(self.url, open_timeout=8) as ws:
+            # a free cloud server can take up to a minute to wake up
+            timeout = 90 if self.url.startswith("wss://") else 10
+            async with websockets.connect(self.url, open_timeout=timeout) as ws:
                 self.status = "connected"
                 sender = asyncio.ensure_future(self._send(ws))
                 try:
@@ -1078,9 +1081,14 @@ def draw_waiting(rnd, dt, client):
         dots = "." * (1 + int(rnd.t * 2) % 3)
         rnd.text("Waiting for the second player" + dots, rnd.f_small, (180, 176, 170), center=(W // 2, box.y + 256))
     else:
+        if client.started is None:
+            client.started = rnd.t
         dots = "." * (1 + int(rnd.t * 2) % 3)
         rnd.text("Connecting" + dots, rnd.f_big, (236, 232, 224), center=(W // 2, box.y + 150))
         rnd.text(client.url, rnd.f_small, (180, 176, 170), center=(W // 2, box.y + 210))
+        if rnd.t - client.started > 5:
+            rnd.text("The server is waking up. A free cloud server can take up to a minute.",
+                     rnd.f_small, (214, 210, 202), center=(W // 2, box.y + 250))
     rnd.hints(W // 2, box.bottom - 50, [("Esc", "Cancel")])
 
 
