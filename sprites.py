@@ -210,6 +210,48 @@ BLACKCAT_SIT = [
     "...nnnnnnnnnnn..",
 ]
 
+# Being carried in someone's arms: head upright as usual, front paws poking out under the arm,
+# the rest of the body, the back legs and the tail hanging straight down.
+CAT_HELD = [
+    ".O....O.",
+    ".OO..OO.",
+    ".OOOOOO.",
+    ".OEOOEO.",
+    ".OOOOOOP",
+    "..OWWO..",
+    "..OOWO..",
+    ".WOoOOW.",
+    "..OoOO..",
+    "..OOoO..",
+    "..OOOO..",
+    "..OoOO..",
+    "..O..O..",
+    "..W..W..",
+    "...oO...",
+    "....O...",
+    "....o...",
+]
+FOX_HELD = [
+    ".k...k..",
+    ".FF.FF..",
+    ".FF.FF..",
+    ".FFFFF..",
+    ".FeFFFF.",
+    ".FFWWWk.",
+    "..FWWW..",
+    ".kFWWFk.",
+    "..FWWF..",
+    "..FFFF..",
+    "..FFFF..",
+    "..ffff..",
+    "..f..f..",
+    "..k..k..",
+    "...FF...",
+    "...FF...",
+    "...FF...",
+    "...WW...",
+]
+
 # Extra poses for the idle animation. Blinking frames are made by closing the eyes.
 POSES = {
     "cat": {"sit": CAT_SIT, "tail": _KITTEN_TAIL_B + _KITTEN_TOP[6:] + _KITTEN_LEGS[0]},
@@ -385,6 +427,9 @@ def load_all():
             rows[name + "_blink"] = [r.replace(eye, fur) for r in rows[name]]
         surfs = {name: _load(f"{key}_{name}", rr, 2) for name, rr in rows.items()}
         s[key + "_pose"] = {1: surfs, -1: {n: pygame.transform.flip(f, True, False) for n, f in surfs.items()}}
+    for key, rows in (("cat", CAT_HELD), ("fox", FOX_HELD)):
+        surf = _load(f"{key}_held", rows, 2)
+        s[key + "_held"] = {1: surf, -1: pygame.transform.flip(surf, True, False)}
     s["star"] = _from_rows(STAR, 2)
     s["fish"] = _from_rows(FISH, 2)
     s["chicken"] = _from_rows(CHICKEN, 2)

@@ -434,6 +434,7 @@ class Renderer:
         self.t = 0.0
         self.heart_t = 0.0
         self.idle = {}        # how long each character has been standing still
+        self.big_hearts = []  # [x, y, life, size]
         self.viewer = None    # online: "cat" or "fox" (whose eyes we see the dark through)
         self.fish_icon = pygame.transform.scale(self.spr["fish"], (18, 10))
         self.fish_icon_dim = self.fish_icon.copy()
@@ -495,6 +496,7 @@ class Renderer:
 
     def reset(self):
         self.idle.clear()
+        self.big_hearts.clear()
         self.fx.items.clear()
         self.popups.clear()
         self.trail.clear()
@@ -537,9 +539,10 @@ class Renderer:
                 self.fx.burst(x, y, (255, 255, 255), 10, 90, 0.5, 2)
             elif kind == "npc_gone":
                 self.fx.burst(x, y, (200, 200, 210), 16, 100, 0.5, 4)
-            elif kind == "hold":
-                self.fx.burst(x, y, PINK, 16, 110, 0.6, 3)
-                self.popup("There you are!", x, y - 30, PINK)
+            elif kind == "hold":                      # Yolanta scoops up the kitten: always a smooch
+                self.fx.burst(x, y - 14, PINK, 20, 110, 0.8, 3)
+                self.popup("Mwah!", x, y - 44, (255, 150, 190))
+                self.big_hearts.append([x, y - 30, 1.0, 0.7])
             elif kind == "helper_in_janis":
                 self.fx.burst(x, y, (200, 200, 210), 18, 110, 0.6, 4)
                 self.popup("I say!", x, y - 34, (200, 210, 255))
@@ -554,16 +557,18 @@ class Renderer:
                 self.fx.burst(x, y - 10, (255, 120, 170), 22, 120, 0.9, 4)
                 self.popup("Walter, my boy!", x, y - 32, (255, 150, 190))
                 self.shake = 0.15
-            elif kind == "grab_yolanta":
-                self.fx.burst(x, y, PINK, 16, 110, 0.6, 3)
-                self.popup("There you are!", x, y - 30, PINK)
+            elif kind == "grab_yolanta":              # ...and the fox gets a smooch too
+                self.fx.burst(x, y - 14, PINK, 20, 110, 0.8, 3)
+                self.popup("Mwah!", x, y - 44, (255, 150, 190))
+                self.big_hearts.append([x, y - 30, 1.0, 0.7])
                 self.shake = 0.15
             elif kind == "tidy":
                 self.fx.burst(x, y, (240, 240, 250), 14, 80, 0.5, 2)
                 self.popup("Tidy!", x, y - 30, (230, 230, 240))
-            elif kind == "kiss":
+            elif kind == "kiss":                      # Janis kisses Walter: a big heart
                 self.fx.burst(x, y - 10, (255, 120, 170), 30, 140, 1.0, 4)
-                self.popup("Mwah!", x, y - 34, (255, 140, 190))
+                self.popup("Mwah!", x, y - 58, (255, 140, 190))
+                self.big_hearts.append([x, y - 34, 1.6, 1.0])
             elif kind == "lights_on":
                 self.popup("Lights on!", W // 2, 40, (255, 240, 160))
                 self.fx.burst(x, y - 20, (255, 240, 160), 20, 120, 0.6, 3)
@@ -615,6 +620,22 @@ class Renderer:
             frame.set_alpha(alpha)
         r = frame.get_rect(midbottom=(x, y + 12 + bob))
         self.screen.blit(frame, r)
+        return r
+
+    def draw_carried(self, holder_rect, holder, role):
+        """The kitten or the fox in someone's arms: head up, body and tail hanging down, swaying a little."""
+        f = holder.facing
+        img = self.spr[role + "_held"][f]
+        sway = int(round(math.sin(self.t * 5) * 2))
+        cx = holder_rect.centerx + f * 10 + sway
+        top = holder_rect.top + int(holder_rect.h * 0.22)
+        r = img.get_rect(midtop=(cx, top))
+        self.screen.blit(img, r)
+        # the holder's sleeve across the tummy, just under the front paws
+        sleeve = (52, 60, 92) if holder.kind == "janis" else (178, 142, 214)
+        arm = pygame.Rect(r.centerx - 11, r.top + 18, 22, 6)
+        pygame.draw.rect(self.screen, sleeve, arm, border_radius=3)
+        pygame.draw.rect(self.screen, (28, 22, 30), arm, 1, border_radius=3)
         return r
 
     def stars(self, x, top):
@@ -705,14 +726,33 @@ class Renderer:
             ghost.set_alpha(int(life * 400))
             scr.blit(ghost, ghost.get_rect(midbottom=(int(x), int(y) + HUD_H + 12)))
 
-        bodies = [(g.fox, "fox")] + [(n, n.kind) for n in g.npcs]
-        if not g.cat.hidden:
+        # who is being carried in Janis's or Yolanta's arms?
+        carried = {}
+        for role, b in (("cat", g.cat), ("fox", g.fox)):
+            if b.hold > 0 and not (role == "cat" and g.cat.hidden):
+                holder = next((n for n in g.npcs if n.kind == b.held_by and n.holding > 0), None)
+                if holder is not None:
+                    carried[id(holder)] = (role, b)
+        carried_bodies = {id(b) for _, b in carried.values()}
+        bodies = [(n, n.kind) for n in g.npcs]
+        if id(g.fox) not in carried_bodies:
+            bodies.append((g.fox, "fox"))
+        if not g.cat.hidden and id(g.cat) not in carried_bodies:
             bodies.append((g.cat, "cat"))
         for b, key in sorted(bodies, key=lambda e: e[0].y):
             alpha = None
             if key in ("blackcat", "gran") and b.life < 1.5 and b.holding <= 0:
                 alpha = 255 if int(self.t * 10) % 2 else 110
             r = self.draw_body(b, key, alpha, dt, closed_eyes=(key == "fox" and g.fox.kiss > 0))
+            if id(b) in carried:
+                role, pet = carried[id(b)]
+                pr = self.draw_carried(r, b, role)
+                total = GRAN_HOLD if pet.held_by == "gran" else JANIS_HOLD
+                col = (150, 170, 240) if pet.held_by == "janis" else PINK
+                bar(scr, pr.centerx - 16, r.top - 10, 32, 5, pet.hold / total, col)
+                if pet.held_by == "janis" and role == "fox" and int(self.t * 6) % 2:
+                    self.fx.burst(pr.centerx, pr.top - HUD_H, (255, 120, 170), 1, 40, 0.8, 3)
+                continue
             if key == "fox":
                 if g.fox.stun > 0:
                     self.stars(int(b.x), r.top)
@@ -740,6 +780,15 @@ class Renderer:
                 self.fx.burst(g.cat.x, g.cat.y - 16, PINK, 2, 40, 0.8, 3)
 
         self.fx.draw(scr)
+        for h in self.big_hearts:
+            h[2] -= dt
+            h[1] -= 18 * dt
+        self.big_hearts = [h for h in self.big_hearts if h[2] > 0]
+        for x, y, life, size in self.big_hearts:
+            k = size * (1.0 + 0.15 * math.sin(self.t * 10))         # pulsing
+            img = pygame.transform.scale(self.spr["heart"], (int(40 * k), int(36 * k)))
+            img.set_alpha(int(255 * min(1.0, life * 2)))
+            scr.blit(img, img.get_rect(center=(int(x), int(y) + HUD_H)))
         self.draw_darkness(g)
 
         for p in self.popups:
