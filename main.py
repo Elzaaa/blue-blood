@@ -25,13 +25,22 @@ WINS_NEEDED = 3
 SIDES = [
     dict(up=pygame.KSCAN_W, down=pygame.KSCAN_S, left=pygame.KSCAN_A, right=pygame.KSCAN_D,
          act=(pygame.KSCAN_E, pygame.KSCAN_SPACE), summon=(pygame.KSCAN_Q,),
-         names=("WASD", "E", "Q")),
+         names=("WASD", "E", "Q"), move=("W", "A", "S", "D")),
     dict(up=pygame.KSCAN_UP, down=pygame.KSCAN_DOWN, left=pygame.KSCAN_LEFT, right=pygame.KSCAN_RIGHT,
          act=(pygame.KSCAN_PERIOD, pygame.KSCAN_RETURN, pygame.KSCAN_KP_0, pygame.KSCAN_L),
          summon=(pygame.KSCAN_SLASH, pygame.KSCAN_RSHIFT, pygame.KSCAN_KP_1, pygame.KSCAN_K),
-         names=("Arrows", ".", "/")),
+         names=("Arrows", ".", "/"), move=("UP", "LEFT", "DOWN", "RIGHT")),
 ]
 PLAYER = ["Player 1", "Player 2"]
+# True: the cat always plays on WASD + E + Q and the fox on the arrows, players swap seats.
+# False: each player keeps their side of the keyboard and the keys swap with the roles.
+CONTROLS = {"follow_role": True}
+TIMERS = [90, 180, None]               # round length options; None = no timer
+SETTINGS = {"timer": 90}
+
+
+def timer_label(t):
+    return "off" if t is None else f"{t // 60}:{t % 60:02d}"
 
 CAT_COL = (222, 172, 128)
 FOX_COL = (255, 128, 48)
@@ -249,6 +258,12 @@ class Match:
     def player_of(self, role):
         return self.cat_player if role == "cat" else 1 - self.cat_player
 
+    def side_of(self, role):
+        """Which side of the keyboard plays this role."""
+        if CONTROLS["follow_role"]:
+            return 0 if role == "cat" else 1
+        return self.player_of(role)
+
     def finish_round(self, winner_role):
         self.last = self.player_of(winner_role)
         self.wins[self.last] += 1
@@ -261,8 +276,8 @@ class Match:
         self.level = random.choice([n for n in logic.LEVELS if n != self.level])
 
     def inputs(self, held, keys):
-        return {"cat": read_side(held, keys, self.cat_player),
-                "fox": read_side(held, keys, 1 - self.cat_player)}
+        return {"cat": read_side(held, keys, self.side_of("cat")),
+                "fox": read_side(held, keys, self.side_of("fox"))}
 
 
 # --- rendering --------------------------------------------------------------
@@ -405,6 +420,10 @@ class Renderer:
             elif kind == "grab_janis":
                 self.fx.burst(x, y, (120, 140, 220), 16, 110, 0.6, 3)
                 self.popup("Gotcha!", x, y - 30, (200, 210, 255))
+                self.shake = 0.15
+            elif kind == "grab_janis_fox":           # Janis has a soft spot for Walter the fox
+                self.fx.burst(x, y - 10, (255, 120, 170), 22, 120, 0.9, 4)
+                self.popup("Walter, my boy!", x, y - 32, (255, 150, 190))
                 self.shake = 0.15
             elif kind == "grab_yolanta":
                 self.fx.burst(x, y, PINK, 16, 110, 0.6, 3)
@@ -569,6 +588,8 @@ class Renderer:
                     bar(scr, int(b.x) - 16, r.top - 8, 32, 5, g.fox.kiss / JANIS_KISS, (255, 120, 170))
                 elif g.fox.hold > 0:
                     bar(scr, int(b.x) - 16, r.top - 8, 32, 5, g.fox.hold / JANIS_HOLD, (150, 170, 240))
+                    if g.fox.held_by == "janis" and int(self.t * 6) % 2:      # hearts while Janis holds him
+                        self.fx.burst(b.x, b.y - 18, (255, 120, 170), 1, 40, 0.8, 3)
                 elif g.fox.eat > 0:
                     scr.blit(self.spr["chicken"], self.spr["chicken"].get_rect(midbottom=(int(b.x), r.top)))
                 elif g.fox.boost > 0 and int(self.t * 8) % 2:
@@ -598,20 +619,31 @@ class Renderer:
 
         if state == "play" and g.countdown > 0:
             self.overlay(110)
-            cat_p, fox_p = m.cat_player, 1 - m.cat_player
-            self.text(f"Round {m.round}", self.f_big, (255, 255, 255), center=(W // 2, H // 2 - 150))
-            self.text(logic.LEVEL["title"], self.f_mid, (236, 222, 190), center=(W // 2, H // 2 - 110))
-            self.text(f"{PLAYER[cat_p]} ({SIDES[cat_p]['names'][0]}) — CAT", self.f_mid, CAT_COL,
-                      center=(W // 2, H // 2 - 65))
-            self.text(f"{PLAYER[fox_p]} ({SIDES[fox_p]['names'][0]}) — FOX", self.f_mid, FOX_COL,
-                      center=(W // 2, H // 2 - 35))
-            self.text(str(math.ceil(g.countdown)), self.f_huge, (255, 230, 120), center=(W // 2, H // 2 + 50))
+            box = pygame.Rect(W // 2 - 330, H // 2 - 200, 660, 330)
+            self.panel(box, (150, 130, 96))
+            self.text(f"Round {m.round}", self.f_big, (255, 255, 255), center=(W // 2, box.y + 40))
+            self.text(logic.LEVEL["title"], self.f_mid, (236, 222, 190), center=(W // 2, box.y + 80))
+            for i, role in enumerate(("cat", "fox")):
+                y = box.y + 120 + i * 62
+                side = SIDES[m.side_of(role)]
+                icon = self.spr["cat_icon" if role == "cat" else "fox_icon"]
+                self.screen.blit(icon, icon.get_rect(midleft=(box.x + 40, y + 13)))
+                col = CAT_COL if role == "cat" else FOX_COL
+                self.text(f"{PLAYER[m.player_of(role)]}  {role.upper()}", self.f_mid, col, topleft=(box.x + 82, y + 1))
+                kx = box.x + 330
+                r = self.keys(kx, y, side["move"])
+                r = self.key(r.right + 14, y, side["names"][1])
+                self.key(r.right + 6, y, side["names"][2])
+            self.text(str(math.ceil(g.countdown)), self.f_huge, (255, 230, 120), center=(W // 2, box.bottom - 50))
         if g.dark and int(self.t * 2) % 2 and state == "play":
             self.text("LIGHTS OUT!", self.f_mid, (255, 240, 160), center=(W // 2, HUD_H + 20))
         if state == "pause":
             self.overlay()
             self.text("PAUSED", self.f_big, (255, 255, 255), center=(W // 2, H // 2 - 10))
-            self.text("P — resume, Esc — menu", self.f_mid, (220, 220, 220), center=(W // 2, H // 2 + 40))
+            r = self.key(W // 2 - 130, H // 2 + 28, "P")
+            self.text("Resume", self.f_mid, (220, 220, 220), topleft=(r.right + 8, r.y + 2))
+            r = self.key(W // 2 + 20, H // 2 + 28, "Esc")
+            self.text("Menu", self.f_mid, (220, 220, 220), topleft=(r.right + 8, r.y + 2))
         if state == "over":
             self.draw_round_over(g, m)
 
@@ -632,18 +664,62 @@ class Renderer:
         if m.done:
             self.text(f"{PLAYER[m.last].upper()} WINS THE MATCH!", self.f_big, (255, 230, 120),
                       center=(W // 2, cy + 75))
-            self.text("Enter — new match,  Esc — menu", self.f_small, (210, 210, 210),
-                      center=(W // 2, cy + 115))
+            self.hints(W // 2, cy + 105, [("Enter", "New match"), ("Esc", "Menu")])
         else:
-            self.text(f"first to {WINS_NEEDED} wins · roles swap next round",
+            self.text(f"First to {WINS_NEEDED} wins. Roles swap next round.",
                       self.f_small, (210, 210, 210), center=(W // 2, cy + 65))
-            self.text("Enter — next round,  Esc — menu", self.f_small, (210, 210, 210),
-                      center=(W // 2, cy + 92))
+            self.hints(W // 2, cy + 90, [("Enter", "Next round"), ("Esc", "Menu")])
 
     def overlay(self, alpha=120):
         o = pygame.Surface((W, H), pygame.SRCALPHA)
         o.fill((10, 8, 14, alpha))
         self.screen.blit(o, (0, 0))
+
+    def key(self, x, y, label, h=26, font=None):
+        """Draw a keyboard key (rounded box with its label). Returns its rect."""
+        font = font or self.f_small
+        scr = self.screen
+        arrow = label in ("UP", "DOWN", "LEFT", "RIGHT")
+        w = h if (arrow or len(label) == 1) else font.size(label)[0] + 14
+        rect = pygame.Rect(x, y, w, h)
+        pygame.draw.rect(scr, (20, 16, 24), rect.move(0, 3), border_radius=6)
+        pygame.draw.rect(scr, (236, 230, 216), rect, border_radius=6)
+        pygame.draw.rect(scr, (150, 140, 128), rect, 1, border_radius=6)
+        if arrow:
+            cx, cy, k = rect.centerx, rect.centery, h // 4
+            pts = {"UP": [(cx, cy - k), (cx - k, cy + k // 2), (cx + k, cy + k // 2)],
+                   "DOWN": [(cx, cy + k), (cx - k, cy - k // 2), (cx + k, cy - k // 2)],
+                   "LEFT": [(cx - k, cy), (cx + k // 2, cy - k), (cx + k // 2, cy + k)],
+                   "RIGHT": [(cx + k, cy), (cx - k // 2, cy - k), (cx - k // 2, cy + k)]}[label]
+            pygame.draw.polygon(scr, (44, 38, 46), pts)
+        else:
+            self.text(label, font, (44, 38, 46), center=rect.center, shadow=False)
+        return rect
+
+    def keys(self, x, y, labels, h=26, font=None, gap=4):
+        r = None
+        for lab in labels:
+            r = self.key(x, y, lab, h, font)
+            x = r.right + gap
+        return r
+
+    def hints(self, cx, y, items, font=None, h=26):
+        """A centred row of  [key] label   [key] label ..."""
+        font = font or self.f_small
+        def kw(k):
+            return h if len(k) == 1 or k in ("UP", "DOWN", "LEFT", "RIGHT") else font.size(k)[0] + 14
+        total = sum(kw(k) + 8 + font.size(t)[0] for k, t in items) + 34 * (len(items) - 1)
+        x = cx - total // 2
+        for k, t in items:
+            r = self.key(x, y, k, h, font)
+            tr = self.text(t, font, (226, 222, 214), topleft=(r.right + 8, y + (h - font.get_height()) // 2 + 1))
+            x = tr.right + 34
+
+    def panel(self, rect, accent=(96, 84, 104)):
+        s = pygame.Surface(rect.size, pygame.SRCALPHA)
+        pygame.draw.rect(s, (22, 18, 26, 228), s.get_rect(), border_radius=14)
+        self.screen.blit(s, rect)
+        pygame.draw.rect(self.screen, accent, rect, 2, border_radius=14)
 
     def ability(self, x, y, icon, label, key, cd, total, active=False):
         """Ability badge: icon, label with key, and a cooldown bar."""
@@ -652,7 +728,8 @@ class Renderer:
         if active:
             self.text(f"{label}: active!", self.f_tiny, (255, 230, 120), topleft=(x, y + 1))
         elif cd <= 0:
-            self.text(f"{label} [{key}]", self.f_tiny, (160, 240, 160), topleft=(x, y + 1))
+            r = self.key(x, y, key, 16, self.f_tiny)
+            self.text(label, self.f_tiny, (160, 240, 160), topleft=(r.right + 4, y + 1))
         else:
             self.text(label, self.f_tiny, (150, 140, 160), topleft=(x, y + 1))
             lw = self.f_tiny.size(label)[0]
@@ -662,35 +739,43 @@ class Renderer:
         scr = self.screen
         pygame.draw.rect(scr, (34, 28, 42), (0, 0, W, HUD_H))
         pygame.draw.line(scr, (80, 66, 96), (0, HUD_H - 1), (W, HUD_H - 1), 2)
-        cat_side, fox_side = SIDES[m.cat_player]["names"], SIDES[1 - m.cat_player]["names"]
+        cat_side, fox_side = SIDES[m.side_of("cat")]["names"], SIDES[m.side_of("fox")]["names"]
 
         # cat
         scr.blit(self.spr["cat_icon"], (10, 8))
-        r = self.text(f"CAT · {PLAYER[m.cat_player]}", self.f_mid, CAT_COL, topleft=(44, 6))
+        r = self.text(f"CAT  {PLAYER[m.cat_player]}", self.f_mid, CAT_COL, topleft=(44, 6))
         for i in range(FISH_WIN):
             scr.blit(self.fish_icon if i < g.fish_got else self.fish_icon_dim, (r.right + 8 + i * 19, 12))
         if g.cat.hidden:
-            self.text(f"in wardrobe {math.ceil(g.cat.hide_t)}s · {cat_side[0]} — next wardrobe, "
-                      f"{cat_side[1]} — get out", self.f_tiny, PINK, topleft=(44, 31))
+            r = self.text(f"In wardrobe {math.ceil(g.cat.hide_t)}s.  Move: next wardrobe", self.f_tiny, PINK,
+                          topleft=(44, 31))
+            k = self.key(r.right + 10, 29, cat_side[1], 16, self.f_tiny)
+            self.text("get out", self.f_tiny, PINK, topleft=(k.right + 4, 31))
         elif g.cat.hold > 0:
             who = "Janis" if g.cat.held_by == "janis" else "Yolanta"
             self.text(f"{who} has you!", self.f_tiny, PINK, topleft=(44, 31))
         else:
             self.ability(44, 29, self.spr["blackcat_icon"], "black cat", cat_side[2], g.cat.summon_cd,
                          BLACKCAT_COOLDOWN, active=g.npc("blackcat") is not None)
+            k = self.key(186, 29, cat_side[1], 16, self.f_tiny)
             if g.cat.ward_cd > 0:
-                self.text(f"wardrobe in {math.ceil(g.cat.ward_cd)}s", self.f_tiny, (150, 140, 160),
-                          topleft=(200, 31))
+                self.text(f"door, vase  (wardrobe in {math.ceil(g.cat.ward_cd)}s)", self.f_tiny,
+                          (150, 140, 160), topleft=(k.right + 4, 31))
+            else:
+                self.text("door, vase, wardrobe", self.f_tiny, (200, 200, 210), topleft=(k.right + 4, 31))
 
         # timer
-        tl = max(0, math.ceil(g.time_left))
-        col = (255, 90, 90) if tl <= 10 else (255, 255, 255)
-        self.text(f"{tl // 60}:{tl % 60:02d}", self.f_big, col, center=(W // 2 + 30, HUD_H // 2 + 2))
+        if g.time_left is None:
+            self.text("NO TIMER", self.f_mid, (200, 200, 210), center=(W // 2 + 30, HUD_H // 2 + 2))
+        else:
+            tl = max(0, math.ceil(g.time_left))
+            col = (255, 90, 90) if tl <= 10 else (255, 255, 255)
+            self.text(f"{tl // 60}:{tl % 60:02d}", self.f_big, col, center=(W // 2 + 30, HUD_H // 2 + 2))
 
         # fox
         rx = W - 290
         scr.blit(self.spr["fox_icon"], (rx, 8))
-        r = self.text(f"FOX · {PLAYER[1 - m.cat_player]}", self.f_mid, FOX_COL, topleft=(rx + 34, 6))
+        r = self.text(f"FOX  {PLAYER[1 - m.cat_player]}", self.f_mid, FOX_COL, topleft=(rx + 34, 6))
         for i in range(FOX_HEARTS):
             img = self.spr["heart"] if i < g.fox.hearts else self.spr["heart_empty"]
             scr.blit(img, (r.right + 8 + i * 20, 8))
@@ -706,14 +791,14 @@ class Renderer:
         else:
             self.ability(rx + 34, 29, self.spr["star"], "dash", fox_side[1], g.fox.dash_cd, DASH_COOLDOWN)
             self.ability(rx + 146, 29, self.spr["gran_icon"], "Yolanta", fox_side[2], g.fox.summon_cd,
-                         GRAN_COOLDOWN, active=g.npc("gran") is not None)
+                         GRAN_COOLDOWN, active=g.perk_active())
 
     def draw_menu(self, dt):
         self.texts.clear()
         self.t += dt
         scr = self.screen
         scr.blit(self.bg, (0, HUD_H))
-        self.overlay(185)
+        self.overlay(150)
         f = int(self.t * 6) % 2
 
         def show(key, facing, cx, by, scale=1.0):
@@ -722,51 +807,74 @@ class Renderer:
             scr.blit(img, img.get_rect(midbottom=(cx, by)))
 
         # title
-        title = self.f_title
         bob = math.sin(self.t * 2) * 3
-        r = self.text("BLUE BLOOD", title, (120, 160, 255), center=(W // 2, 58 + bob))
+        r = self.text("BLUE BLOOD", self.f_title, (120, 160, 255), center=(W // 2, 54 + bob))
         pygame.draw.line(scr, (230, 196, 90), (r.left + 10, r.bottom + 2), (r.right - 10, r.bottom + 2), 2)
-        show("blackcat", 1, 62, 104, 1.0)
-        show("cat", 1, 150, 100, 1.4)
-        show("fox", -1, W - 170, 100, 1.4)
-        show("janis", -1, W - 108, 104, 1.1)
-        show("gran", -1, W - 48, 104, 1.1)
-        self.text("the cat runs, the fox chases · roles swap every round · first to 3 wins",
-                  self.f_small, (235, 235, 235), center=(W // 2, 122))
+        self.text("The kitten runs, the fox chases. Roles swap every round. First to 3 wins.",
+                  self.f_small, (226, 222, 214), center=(W // 2, 112))
 
-        lx, rx, y0 = W // 2 - 460, W // 2 + 70, 148
-        self.text("CAT", self.f_mid, CAT_COL, topleft=(lx, y0))
-        for i, s in enumerate(["Survive 1:30 or collect 5 fish",
-                               "Action: door / vase / wardrobe",
-                               "Smash a vase — shards slow the fox,",
-                               "   but the noise brings Janis or Yolanta",
-                               "Hide in wardrobes, sneak between them",
-                               "Perk: black cat — chases the fox,",
-                               "   a catch costs the fox a heart"]):
-            self.text(s, self.f_small, (235, 235, 235), topleft=(lx, y0 + 28 + i * 22))
-        self.text("FOX", self.f_mid, FOX_COL, topleft=(rx, y0))
-        for i, s in enumerate(["Catch the cat! You have 3 hearts",
-                               "Action: dash",
-                               "Wait at a wardrobe to sniff out the cat",
-                               "Roast chicken somewhere makes you faster",
-                               "You can scratch through closed doors",
-                               "Perk: Yolanta — grabs the cat",
-                               "   and holds it while you run over"]):
-            self.text(s, self.f_small, (235, 235, 235), topleft=(rx, y0 + 28 + i * 22))
+        follow = CONTROLS["follow_role"]
 
-        self.text("Lights out? Old Janis comes to fix them and grabs anyone in his way!",
-                  self.f_small, (255, 240, 160), center=(W // 2, y0 + 200))
-        for i in range(2):
-            n = SIDES[i]["names"]
-            self.text(f"{PLAYER[i]}:  {n[0]} — move,  {n[1]} — action,  {n[2]} — perk",
-                      self.f_small, (200, 220, 255), center=(W // 2, y0 + 236 + i * 24))
+        def role_card(rect, role, title, goal, rows, tips, col):
+            self.panel(rect, col)
+            show(role, 1 if role == "cat" else -1, rect.x + 62, rect.y + 84, 1.9)
+            self.text(title, self.f_big, col, topleft=(rect.x + 120, rect.y + 14))
+            self.text(goal, self.f_small, (236, 232, 224), topleft=(rect.x + 122, rect.y + 58))
+            side = SIDES[0 if role == "cat" else 1]
+            y = rect.y + 100
+            for kind, label in rows:
+                if kind == "move":
+                    k = self.keys(rect.x + 24, y, side["move"]) if follow else \
+                        self.key(rect.x + 24, y, "Move")
+                else:
+                    idx = 1 if kind == "action" else 2
+                    k = self.key(rect.x + 24, y, side["names"][idx] if follow else kind.capitalize())
+                self.text(label, self.f_small, (236, 232, 224), topleft=(max(k.right, rect.x + 140) + 12, y + 4))
+                y += 36
+            y += 4
+            for tip in tips:
+                pygame.draw.circle(scr, col, (rect.x + 30, y + 9), 3)
+                self.text(tip, self.f_small, (196, 190, 182), topleft=(rect.x + 44, y))
+                y += 25
 
+        cw, ch, top = 556, 318, 136
+        role_card(pygame.Rect(W // 2 - cw - 12, top, cw, ch), "cat", "THE KITTEN",
+                  ("Collect 5 fish" if SETTINGS["timer"] is None
+                   else f"Survive {timer_label(SETTINGS['timer'])} or collect 5 fish"),
+                  [("move", "Run"), ("action", "Door, vase or wardrobe"), ("perk", "Call the black cat")],
+                  ["Smashed vases slow the fox, but the noise brings help",
+                   "Hide in a wardrobe, sneak to another one",
+                   "The black cat chases the fox and takes a heart"], CAT_COL)
+        role_card(pygame.Rect(W // 2 + 12, top, cw, ch), "fox", "WALTER THE FOX",
+                  "Catch the kitten! You have 3 hearts",
+                  [("move", "Run"), ("action", "Dash"), ("perk", "Call Yolanta to grab the kitten")],
+                  ["Wait at a wardrobe to sniff out the kitten",
+                   "Roast chicken makes you faster",
+                   "Push against a closed door to scratch through"], FOX_COL)
+
+        # the residents
+        strip = pygame.Rect(W // 2 - cw - 12, top + ch + 14, cw * 2 + 24, 64)
+        self.panel(strip, (120, 112, 128))
+        show("janis", 1, strip.x + 36, strip.bottom - 8, 0.9)
+        show("gran", 1, strip.x + 74, strip.bottom - 8, 0.9)
+        self.text("Janis and Yolanta wander the house and grab anyone they spot.",
+                  self.f_small, (236, 232, 224), topleft=(strip.x + 110, strip.y + 12))
+        self.text("Janis adores Walter the fox. When the lights go out, he goes to switch them back on.",
+                  self.f_small, (196, 190, 182), topleft=(strip.x + 110, strip.y + 36))
+
+        # controls & settings
+        y = strip.bottom + 18
+        if not follow:
+            self.hints(W // 2, y, [("WASD", "Player 1 moves"), ("E", "action"), ("Q", "perk"),
+                                   ("Arrows", "Player 2 moves"), (".", "action"), ("/", "perk")], self.f_tiny, 22)
+            y += 30
         style = "Manor" if STYLE["name"] == "manor" else "House"
-        self.text(f"T — style: {style}    ·    F11 — fullscreen / window", self.f_small, (190, 190, 200),
-                  center=(W // 2, H - 62))
+        keys_mode = "follow the role" if follow else "stay with the player"
+        self.hints(W // 2, y, [("R", f"Timer: {timer_label(SETTINGS['timer'])}"), ("T", f"Style: {style}"),
+                               ("C", f"Keys {keys_mode}"), ("F11", "Fullscreen")],
+                   self.f_small, 24)
         if int(self.t * 2) % 2 == 0:
-            self.text("Press ENTER to start", self.f_mid, (255, 255, 160), center=(W // 2, H - 30))
-
+            self.hints(W // 2, H - 44, [("Enter", "Start the match")], self.f_mid, 32)
 
 def make_window(fullscreen):
     if sys.platform == "emscripten":              # browser build
@@ -821,11 +929,15 @@ async def main():
                 held.clear()
 
         if state == "menu":
+            if pygame.KSCAN_R in keys_down:
+                SETTINGS["timer"] = TIMERS[(TIMERS.index(SETTINGS["timer"]) + 1) % len(TIMERS)]
+            if pygame.KSCAN_C in keys_down:
+                CONTROLS["follow_role"] = not CONTROLS["follow_role"]
             if pygame.KSCAN_T in keys_down:
                 STYLE["name"] = "classic" if STYLE["name"] == "manor" else "manor"
             if pygame.KSCAN_RETURN in keys_down:
                 match = Match()
-                game = Game(level=match.level)
+                game = Game(level=match.level, round_time=SETTINGS["timer"])
                 rnd.reset()
                 state = "play"
             rnd.draw_menu(dt)

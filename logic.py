@@ -80,23 +80,31 @@ CHICKEN_EAT = 1.2
 CHICKEN_BOOST = 6.0
 CHICKEN_MULT = 1.3
 
-BLACKOUTS = ((18.0, 32.0), (52.0, 66.0))   # lights go out twice: random moment in each window
+FIRST_BLACKOUT = (18.0, 32.0)   # the lights first go out at a random moment in this window...
+BLACKOUT_GAP = (22.0, 38.0)     # ...and then again after this much light (twice in a 1:30 round)
+NO_TIMER_LENGTH = 1800.0        # blackouts are planned this far ahead when there's no timer
 DARK_TIME = 12.0
+DARK_MIN = 5.0           # Janis can't switch the lights back on sooner than this
 DARK_WARN = 1.5
 
-JANIS_SPEED = 72         # Janis, the old gentleman: comes to switch the lights back on
-JANIS_DELAY = 2.0        # he shows up a moment after the lights go out
-JANIS_MIN_PATH = 10      # he comes from a door at least this far from a switch
-JANIS_NOTICE = 110       # grabs anyone who comes this close
+# Janis and Yolanta live in the house: each strolls around their own part of it and goes
+# after anyone they spot. Janis has an eye for the fox (Walter), Yolanta for the kitten.
+RES_PATROL_SPEED = 52
+RES_CHASE_SPEED = {"janis": 84, "yolanta": 96}
+RES_NOTICE = {"janis": {"fox": 170, "cat": 90}, "yolanta": {"cat": 170, "fox": 90}}
+RES_LOSE = 1.5           # keeps going where they last saw someone for this long
+RES_IGNORE = 6.0         # after letting someone go they leave them alone for a while
+RES_PAUSE = (1.0, 3.0)   # little stops while strolling
+
+JANIS_SPEED = 72         # Janis walking to the light switch
+JANIS_DELAY = 2.0        # he notices the blackout a moment later
+JANIS_NOTICE = 110       # while busy, they only grab someone who comes this close
 JANIS_REACH = 24
 JANIS_HOLD = 2.0
 JANIS_KISS_CHANCE = 0.2  # 1 in 5: kisses the fox instead of grabbing it
 JANIS_KISS = 3.0         # the kissed fox is too flustered to move
-JANIS_IGNORE = 4.0       # after letting someone go he leaves them alone for a while
 
 VASE_DELAY = 2.5         # a smashed vase is loud: Janis or Yolanta come to check
-VASE_DOOR_MIN = 6        # ...from the nearest door at least this far from the shards
-VASE_HELPER_LIFE = 14.0
 
 FOX_HEARTS = 3
 SUMMON_FIRST = 6.0
@@ -107,7 +115,7 @@ BLACKCAT_COOLDOWN = 18.0
 BLACKCAT_REACH = 26
 FOX_HIT_STUN = 1.5
 
-GRAN_SPEED = 105         # grandma (fox perk)
+GRAN_SPEED = 105         # Yolanta answering the fox's call (fox perk)
 GRAN_LIFE = 10.0
 GRAN_COOLDOWN = 18.0
 GRAN_REACH = 24
@@ -195,7 +203,7 @@ class Body:
 class Npc(Body):
     def __init__(self, kind, x, y, speed, life):
         super().__init__(x, y, speed)
-        self.kind = kind          # "blackcat", "gran" (fox perk), "janis", "yolanta" (house residents)
+        self.kind = kind          # "blackcat" (cat perk), "janis", "yolanta" (the residents)
         self.life = life
         self.door_t = 0.0
         self.holding = 0.0
@@ -205,11 +213,17 @@ class Npc(Body):
         self.blackout = None
         self.victim = None
         self.ignore = {"cat": 0.0, "fox": 0.0}
+        self.pause = 0.0
+        self.target = None
+        self.lost = 0.0
+        self.perk_t = 0.0
 
 
 class Game:
-    def __init__(self, seed=None, level=None):
+    def __init__(self, seed=None, level=None, round_time=ROUND_TIME):
+        """round_time: seconds the cat must survive, or None for no timer."""
         self.rng = random.Random(seed)
+        self.round_time = round_time
         self.new_round(level)
 
     # ------------------------------------------------------------------
@@ -252,7 +266,7 @@ class Game:
         fox.held_by = None
         fox.boost = 0.0
 
-        self.npcs = []
+        self.npcs = [self._make_resident("janis"), self._make_resident("yolanta")]
         self.fish = []
         self.fish_got = 0
         self.fish_timer = 0.0
@@ -263,12 +277,14 @@ class Game:
         self.shards = []
         self.pending = []        # vase noise: [time, shard cell] -> someone comes to check
 
-        self.time_left = ROUND_TIME
+        self.time_left = self.round_time      # None = no timer
         self.elapsed = 0.0
         self.blackouts = []
-        for a, b in BLACKOUTS:
-            start = self.rng.uniform(a, b)
+        limit = (self.round_time - 10) if self.round_time else NO_TIMER_LENGTH
+        start = self.rng.uniform(*FIRST_BLACKOUT)
+        while start < limit:
             self.blackouts.append([start, start + DARK_TIME])
+            start += DARK_TIME + self.rng.uniform(*BLACKOUT_GAP)
         self.countdown = COUNTDOWN
         self.winner = None
         self.reason = None       # caught | wardrobe | time | fish | hearts
@@ -284,6 +300,10 @@ class Game:
     @property
     def dark_warning(self):
         return any(a - DARK_WARN <= self.elapsed < a for a, _ in self.blackouts)
+
+    def perk_active(self):
+        y = self.npc("yolanta")
+        return y is not None and y.mode == "perk"
 
     def fox_free(self):
         f = self.fox
@@ -443,11 +463,12 @@ class Game:
             return
 
         self.elapsed += dt
-        self.time_left -= dt
-        if self.time_left <= 0:
-            self.time_left = 0
-            self._win("cat", "time")
-            return
+        if self.time_left is not None:
+            self.time_left -= dt
+            if self.time_left <= 0:
+                self.time_left = 0
+                self._win("cat", "time")
+                return
         for bo in self.blackouts:
             if bo[0] <= self.elapsed < bo[0] + dt:
                 self.events.append(("lights_off", 0, 0))
@@ -643,11 +664,14 @@ class Game:
         for cell in self._move(fox, mx, my, speed, dt):
             if cell in self.doors:
                 self.doors[cell].scratching = True
-        if fi.get("summon") and fox.summon_cd <= 0 and not self.npc("gran") and not self.npc("yolanta") and not self.cat.hidden:
-            x, y = self._gran_spawn()
-            self.npcs.append(Npc("gran", x, y, GRAN_SPEED, GRAN_LIFE))
+        yol = self.npc("yolanta")
+        if (fi.get("summon") and fox.summon_cd <= 0 and yol and yol.mode != "perk"
+                and yol.holding <= 0 and not self.cat.hidden):
+            self.events.append(("npc_gone", yol.x, yol.y))
+            yol.x, yol.y = self._gran_spawn()
+            yol.mode, yol.perk_t, yol.target, yol.goal = "perk", GRAN_LIFE, "cat", None
             fox.summon_cd = GRAN_COOLDOWN
-            self.events.append(("summon_gran", x, y))
+            self.events.append(("summon_gran", yol.x, yol.y))
 
     def on_shards(self, b):
         c = cell_of(b)
@@ -720,94 +744,88 @@ class Game:
                 w.sniff = max(0.0, w.sniff - dt)
 
     def _update_npcs(self, dt):
-        cat, fox = self.cat, self.fox
+        fox = self.fox
         for n in list(self.npcs):
-            n.life -= dt
             if n.kind in ("janis", "yolanta"):
-                self._update_helper(n, dt)
+                self._update_resident(n, dt)
                 if self.winner:
                     return
                 continue
-            if n.kind == "gran":
-                if n.holding > 0:
-                    n.holding -= dt
-                    n.moving = False
-                    if n.holding <= 0:
-                        self._remove(n)
-                    continue
-                if n.life <= 0:
-                    self._remove(n)
-                    continue
-                if cat.hidden:
-                    n.moving = False      # grandma waits, puzzled
-                elif cat.hold <= 0:
-                    self._chase(n, cat, dt)
-                    if dist(n, cat) < GRAN_REACH:
-                        n.holding = cat.hold = GRAN_HOLD
-                        cat.held_by = "gran"
-                        n.facing = 1 if cat.x > n.x else -1
-                        self.events.append(("hold", cat.x, cat.y))
-            else:
-                if n.life <= 0:
-                    self._remove(n)
-                    continue
-                self._chase(n, fox, dt)
-                if fox.stun <= 0 and dist(n, fox) < BLACKCAT_REACH:
-                    fox.hearts -= 1
-                    fox.stun = FOX_HIT_STUN
-                    fox.eat = 0
-                    fox.dash_t = 0
-                    self.npcs.remove(n)
-                    self.events.append(("hit_fox", fox.x, fox.y))
-                    if fox.hearts <= 0:
-                        self._win("cat", "hearts")
-                        return
+            n.life -= dt                      # the black cat
+            if n.life <= 0:
+                self._remove(n)
+                continue
+            self._chase(n, fox, dt)
+            if fox.stun <= 0 and dist(n, fox) < BLACKCAT_REACH:
+                fox.hearts -= 1
+                fox.stun = FOX_HIT_STUN
+                fox.eat = 0
+                fox.dash_t = 0
+                self.npcs.remove(n)
+                self.events.append(("hit_fox", fox.x, fox.y))
+                if fox.hearts <= 0:
+                    self._win("cat", "hearts")
+                    return
 
-    # --- Janis -----------------------------------------------------------
-    def _spawn_janis(self, blackout):
-        for old in [n for n in self.npcs if n.kind == "janis"]:
-            self.npcs.remove(old)
-        options = []
-        for d in self.doors.values():
-            dist_map, _ = self._bfs((d.c, d.r))
-            sw = min(SWITCHES, key=lambda c: dist_map.get(c, 999))
-            if dist_map.get(sw, 0) >= JANIS_MIN_PATH:
-                options.append((d, sw))
-        door, sw = self.rng.choice(options)
-        n = self._add_helper("janis", door, sw, "lights", DARK_TIME + 3)
-        n.blackout = blackout
+    # --- Janis & Yolanta, the residents -------------------------------------
+    def _zone_cells(self, kind):
+        rooms = LEVEL["residents"][kind]
+        return [(c, r) for r in range(ROWS) for c in range(COLS)
+                if MAP[r][c] == "." and room_of(c, r) in rooms]
 
-    def _vase_responder(self, cell):
-        """Someone heard the crash: Janis or Yolanta, whoever is free."""
-        busy = {n.kind for n in self.npcs}
-        free = []
-        if "janis" not in busy:
-            free.append("janis")
-        if "gran" not in busy and "yolanta" not in busy:
-            free.append("yolanta")
-        if not free:
-            return
-        kind = self.rng.choice(free)
-        dist_map, _ = self._bfs(cell)
-        doors = sorted(self.doors.values(), key=lambda d: dist_map.get((d.c, d.r), 999))
-        far = [d for d in doors if dist_map.get((d.c, d.r), 0) >= VASE_DOOR_MIN]
-        self._add_helper(kind, far[0] if far else doors[-1], cell, "vase", VASE_HELPER_LIFE)
-
-    def _add_helper(self, kind, door, goal_cell, mode, life):
-        door.open = True
-        n = Npc(kind, *door.center, JANIS_SPEED if kind == "janis" else GRAN_SPEED, life)
-        n.goal = Item(*cell_center(*goal_cell))
-        n.goal_cell = goal_cell
-        n.mode = mode            # "lights" (blackout) or "vase" (came to check the noise)
-        n.blackout = None
-        n.victim = None
-        n.ignore = {"cat": 0.0, "fox": 0.0}
-        self.npcs.append(n)
-        self.events.append(("helper_in_" + kind, n.x, n.y))
+    def _make_resident(self, kind):
+        cells = self._zone_cells(kind)
+        far = [c for c in cells
+               if abs(c[0] - CAT_SPAWN[0]) + abs(c[1] - CAT_SPAWN[1]) >= 6
+               and abs(c[0] - FOX_SPAWN[0]) + abs(c[1] - FOX_SPAWN[1]) >= 6] or cells
+        n = Npc(kind, *cell_center(*self.rng.choice(far)), RES_PATROL_SPEED, 1e9)
+        n.mode = "patrol"
+        n.pause = self.rng.uniform(*RES_PAUSE)
+        n.ignore = {"cat": 3.0, "fox": 3.0}
         return n
 
-    def _update_helper(self, n, dt):
-        """Janis and Yolanta as house residents: grab anyone in the way, then do their job."""
+    def _sees(self, n, b, radius):
+        """Within reach and not behind a wall or a closed door."""
+        d = dist(n, b)
+        if d > radius:
+            return False
+        steps = int(d // 8) + 1
+        for i in range(1, steps):
+            t = i / steps
+            c, r = int((n.x + (b.x - n.x) * t) // TILE), int((n.y + (b.y - n.y) * t) // TILE)
+            ch = MAP[r][c]
+            if ch == "#" or (ch == "D" and not self.doors[(c, r)].open):
+                return False
+        return True
+
+    def _grabbable(self, who, n):
+        if n.ignore[who] > 0:
+            return False
+        if who == "cat":
+            return not self.cat.hidden and self.cat.hold <= 0
+        return self.fox_free()
+
+    def _spawn_janis(self, blackout):
+        """The lights went out: Janis heads for the nearest switch."""
+        j = self.npc("janis")
+        if not j:
+            return
+        dist_map, _ = self._bfs(cell_of(j))
+        sw = min(SWITCHES, key=lambda c: dist_map.get(c, 999))
+        j.mode, j.blackout, j.goal_cell, j.goal, j.target = "lights", blackout, sw, Item(*cell_center(*sw)), None
+        self.events.append(("helper_in_janis", j.x, j.y))
+
+    def _vase_responder(self, cell):
+        """Someone heard the crash: the nearest of Janis and Yolanta who isn't busy."""
+        dist_map, _ = self._bfs(cell)
+        free = [n for n in self.npcs if n.kind in ("janis", "yolanta") and n.mode == "patrol" and n.holding <= 0]
+        if not free:
+            return
+        n = min(free, key=lambda n: dist_map.get(cell_of(n), 999))
+        n.mode, n.goal_cell, n.goal, n.target = "vase", cell, Item(*cell_center(*cell)), None
+        self.events.append(("helper_in_" + n.kind, n.x, n.y))
+
+    def _update_resident(self, n, dt):
         cat, fox = self.cat, self.fox
         for k in n.ignore:
             n.ignore[k] = max(0.0, n.ignore[k] - dt)
@@ -815,53 +833,108 @@ class Game:
             n.holding -= dt
             n.moving = False
             if n.holding <= 0:
-                n.ignore[n.victim] = JANIS_IGNORE
-                n.victim = None
+                n.ignore[n.victim] = RES_IGNORE
+                n.victim = n.target = None
+                if n.mode == "perk":
+                    n.mode = "patrol"
             return
-        shards_here = any((s.c, s.r) == n.goal_cell for s in self.shards)
-        if (n.life <= 0 or n.goal is None or (n.mode == "lights" and not self.dark)
-                or (n.mode == "vase" and not shards_here)):
-            self._remove(n)
-            return
-        # whom can they grab?
-        targets = []
-        if not cat.hidden and cat.hold <= 0 and n.ignore["cat"] <= 0:
-            targets.append(("cat", cat))
-        if self.fox_free() and n.ignore["fox"] <= 0:
-            targets.append(("fox", fox))
-        near = [(dist(n, b), who, b) for who, b in targets if dist(n, b) < JANIS_NOTICE]
-        if near:
-            d, who, b = min(near, key=lambda e: e[0])
+        if n.mode == "lights" and not self.dark:
+            n.mode, n.goal = "patrol", None
+        if n.mode == "vase" and not any((s.c, s.r) == n.goal_cell for s in self.shards):
+            n.mode, n.goal = "patrol", None
+        if n.mode == "perk":
+            n.perk_t -= dt
+            if n.perk_t <= 0:
+                n.mode, n.goal, n.target = "patrol", None, None
+
+        # whom do they go after?
+        target = None
+        if n.mode == "perk":
+            if self._grabbable("cat", n):
+                target = ("cat", cat)                 # summoned for the kitten: she knows where it is
+        else:
+            radii = RES_NOTICE[n.kind]
+            if n.mode in ("lights", "vase"):          # busy: only grab whoever comes close
+                radii = {k: JANIS_NOTICE for k in radii}
+            best = None
+            for who, b in (("fox", fox), ("cat", cat)):
+                if not self._grabbable(who, n):
+                    continue
+                rad = radii[who] * (1.6 if n.target == who else 1.0)
+                if self._sees(n, b, rad):
+                    score = dist(n, b) / radii[who]
+                    if best is None or score < best[0]:
+                        best = (score, who, b)
+            if best:
+                n.target, n.lost = best[1], 0.0
+                target = (best[1], best[2])
+            elif n.target and self._grabbable(n.target, n) and n.lost < RES_LOSE:
+                n.lost += dt
+                target = (n.target, cat if n.target == "cat" else fox)
+            else:
+                n.target = None
+
+        if target:
+            who, b = target
+            n.speed = GRAN_SPEED if n.mode == "perk" else RES_CHASE_SPEED[n.kind]
             self._chase(n, b, dt)
             if dist(n, b) < JANIS_REACH:
-                n.facing = 1 if b.x > n.x else -1
-                if who == "cat":
-                    n.holding = cat.hold = JANIS_HOLD
-                    cat.held_by = n.kind
-                    n.victim = "cat"
-                    self.events.append(("grab_" + n.kind, cat.x, cat.y))
-                elif n.kind == "janis" and self.rng.random() < JANIS_KISS_CHANCE:
-                    fox.kiss = JANIS_KISS
-                    fox.dash_t = 0
-                    n.ignore["fox"] = JANIS_IGNORE + JANIS_KISS
-                    self.events.append(("kiss", fox.x, fox.y))
-                else:
-                    n.holding = fox.hold = JANIS_HOLD
-                    fox.held_by = n.kind
-                    fox.dash_t = 0
-                    n.victim = "fox"
-                    self.events.append(("grab_" + n.kind, fox.x, fox.y))
+                self._grab(n, who, b)
             return
-        # otherwise: off to do the job
+
+        # otherwise: their own business
+        if n.mode == "perk":                          # the kitten is hiding: she waits, puzzled
+            n.moving = False
+            return
+        if n.mode == "lights":
+            n.speed = JANIS_SPEED
+        elif n.mode == "vase":
+            n.speed = RES_CHASE_SPEED[n.kind]
+        else:
+            n.speed = RES_PATROL_SPEED
+            if n.goal is None:
+                if n.pause > 0:
+                    n.pause -= dt
+                    n.moving = False
+                    return
+                n.goal_cell = self.rng.choice(self._zone_cells(n.kind))
+                n.goal = Item(*cell_center(*n.goal_cell))
+        if n.mode == "lights" and dist(n, n.goal) < 6 and self.elapsed < n.blackout[0] + DARK_MIN:
+            n.moving = False                           # fumbling with the switch in the dark
+            return
         self._chase(n, n.goal, dt)
         if dist(n, n.goal) < 6:
+            if n.mode == "lights" and self.elapsed < n.blackout[0] + DARK_MIN:
+                return                                 # waits at the switch a moment longer
             if n.mode == "lights":
                 n.blackout[1] = self.elapsed           # lights back on early
                 self.events.append(("lights_on", n.x, n.y))
-            else:
+            elif n.mode == "vase":
                 self.shards = [s for s in self.shards if (s.c, s.r) != n.goal_cell]
                 self.events.append(("tidy", n.x, n.y))
-            self._remove(n)
+            n.mode, n.goal = "patrol", None
+            n.pause = self.rng.uniform(*RES_PAUSE)
+
+    def _grab(self, n, who, b):
+        cat, fox = self.cat, self.fox
+        n.facing = 1 if b.x > n.x else -1
+        if who == "cat":
+            n.holding = cat.hold = GRAN_HOLD if n.mode == "perk" else JANIS_HOLD
+            cat.held_by = n.kind
+            n.victim = "cat"
+            self.events.append(("hold" if n.kind == "yolanta" else "grab_janis", cat.x, cat.y))
+        elif n.kind == "janis" and self.rng.random() < JANIS_KISS_CHANCE:
+            fox.kiss = JANIS_KISS
+            fox.dash_t = 0
+            n.ignore["fox"] = RES_IGNORE + JANIS_KISS
+            n.target = None
+            self.events.append(("kiss", fox.x, fox.y))
+        else:
+            n.holding = fox.hold = JANIS_HOLD
+            fox.held_by = n.kind
+            fox.dash_t = 0
+            n.victim = "fox"
+            self.events.append(("grab_janis_fox" if n.kind == "janis" else "grab_yolanta", fox.x, fox.y))
 
     def _remove(self, n):
         self.npcs.remove(n)

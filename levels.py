@@ -58,6 +58,7 @@ GROUND = dict(
         ("v", 38, 15), ("x", 27, 11), ("w", 38, 19),
     ],
     cat_spawn=(6, 16), fox_spawn=(33, 7), switches=[(15, 1), (29, 11)], food_room="dining",
+    residents={"janis": ["study", "dining"], "yolanta": ["drawing", "library"]},
 )
 
 UPPER = dict(
@@ -89,6 +90,7 @@ UPPER = dict(
         ("w", 38, 13), ("a", 28, 15), ("f", 34, 17), ("b", 35, 17, 2, 3), ("f", 37, 19), ("v", 26, 19),
     ],
     cat_spawn=(5, 15), fox_spawn=(31, 5), switches=[(12, 9), (34, 9)], food_room="master",
+    residents={"janis": ["guest", "guest2"], "yolanta": ["master", "boudoir", "nursery"]},
 )
 
 SERVICE = dict(
@@ -123,6 +125,7 @@ SERVICE = dict(
         ("L", 37, 14, 2, 1), ("d", 33, 16, 2, 1), ("a", 36, 18), ("w", 27, 19), ("v", 38, 19),
     ],
     cat_spawn=(2, 17), fox_spawn=(36, 4), switches=[(28, 1), (12, 11)], food_room="kitchen",
+    residents={"janis": ["butler", "cellar", "housekeeper"], "yolanta": ["kitchen", "servants", "laundry"]},
 )
 
 GARDEN = dict(
@@ -153,6 +156,7 @@ GARDEN = dict(
         ("k", 35, 11, 2, 1), ("w", 38, 11), ("t", 34, 15, 3, 1), ("g", 30, 17), ("g", 31, 19), ("w", 38, 19),
     ],
     cat_spawn=(5, 15), fox_spawn=(32, 5), switches=[(16, 1), (32, 11)], food_room="tearoom",
+    residents={"janis": ["potting", "orchid"], "yolanta": ["rosegarden", "palmhouse", "tearoom"]},
 )
 
 LEVELS = {spec["name"]: spec for spec in (GROUND, UPPER, SERVICE, GARDEN)}
