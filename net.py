@@ -5,13 +5,14 @@ No pygame here, so the server can use it too.
 import math
 
 import logic
-from logic import Game, Item, Npc, Shards
+from logic import Bed, Game, Item, Npc, Shards
 
 PORT = 8765
 
-CAT_KEYS = ("hidden", "hold", "held_by", "summon_cd", "ward_cd", "hide_t")
-FOX_KEYS = ("stun", "kiss", "eat", "boost", "dash_t", "dash_cd", "summon_cd", "hearts", "hold", "held_by")
-NPC_KEYS = ("kind", "life", "holding", "mode")
+CAT_KEYS = ("hidden", "hold", "held_by", "summon_cd", "ward_cd", "hide_t", "sleep")
+FOX_KEYS = ("stun", "kiss", "eat", "boost", "dash_t", "dash_cd", "summon_cd", "hearts", "hold", "held_by",
+            "cage", "cage_taps", "sleep")
+NPC_KEYS = ("kind", "life", "holding", "mode", "carrying")
 
 
 def _body(b, keys):
@@ -38,6 +39,7 @@ def snapshot(g, viewer):
         "fish": [[f.x, f.y] for f in g.fish],
         "chicken": [g.chicken.x, g.chicken.y] if g.chicken else None,
         "sniff": [round(w.sniff, 2) for w in g.wardrobes],
+        "beds": [[b.c, b.r, round(b.cool, 1)] for b in g.beds],
         "time": None if g.time_left is None else round(g.time_left, 2),
         "cd": round(g.countdown, 2),
         "el": round(g.elapsed, 2),
@@ -76,7 +78,8 @@ class MirrorGame(Game):
             b.x, b.y, b._placed = d["x"], d["y"], True
         b.facing, b.moving, b.anim = d["f"], d["m"], d["a"]
         for k in keys:
-            setattr(b, k, d[k])
+            if k in d:                     # an older server may not send every field
+                setattr(b, k, d[k])
 
     def apply(self, s):
         if s["lvl"] != self.level:
@@ -105,6 +108,11 @@ class MirrorGame(Game):
         self.chicken = Item(*s["chicken"]) if s["chicken"] else None
         for w, sn in zip(self.wardrobes, s["sniff"]):
             w.sniff = sn
+        self.beds = []
+        for c, r, cool in s.get("beds", []):
+            b = Bed(c, r)
+            b.cool = cool
+            self.beds.append(b)
         self.time_left, self.countdown, self.elapsed = s["time"], s["cd"], s["el"]
         self._dark, self._warn = s["dark"], s["warn"]
         self.fish_got, self.winner, self.reason = s["fishgot"], s["win"], s["reason"]

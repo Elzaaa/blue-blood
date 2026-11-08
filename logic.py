@@ -104,7 +104,15 @@ JANIS_HOLD = 2.0
 JANIS_KISS_CHANCE = 0.2  # 1 in 5: kisses the fox instead of grabbing it
 JANIS_KISS = 3.0         # the kissed fox is too flustered to move
 
-VASE_DELAY = 2.5         # a smashed vase is loud: Janis or Yolanta come to check
+VASE_DELAY = 2.5         # a smashed vase is loud: Janis or Yolanta always come to check
+
+CARRIER_AFTER = 3        # every 3rd time Janis catches Walter, it's the pet carrier
+CARRIER_TIME = 8.0       # let out after this long anyway...
+CARRIER_TAPS = 12        # ...or sooner by tapping the action key this many times
+
+BEDS = 2                 # comfy pet beds per round: step on one and you doze off
+SLEEP_TIME = 3.5
+BED_REST = 12.0          # a bed that was just slept in stays empty for a while
 
 FOX_HEARTS = 3
 SUMMON_FIRST = 6.0
@@ -180,6 +188,16 @@ class Vase:
         return cell_center(self.c, self.r)
 
 
+class Bed:
+    def __init__(self, c, r):
+        self.c, self.r = c, r
+        self.cool = 0.0
+
+    @property
+    def center(self):
+        return cell_center(self.c, self.r)
+
+
 class Item:
     def __init__(self, x, y):
         self.x, self.y = x, y
@@ -217,6 +235,7 @@ class Npc(Body):
         self.target = None
         self.lost = 0.0
         self.perk_t = 0.0
+        self.carrying = False     # Janis carrying Walter to the pet carrier
 
 
 class Game:
@@ -253,6 +272,7 @@ class Game:
         cat.ward_cd = 0.0
         cat.last_dir = (0, 0)
         cat.held_by = None
+        cat.sleep = 0.0
 
         fox = self.fox = Body(*cell_center(*FOX_SPAWN), FOX_SPEED)
         fox.dash_t = 0.0
@@ -264,6 +284,9 @@ class Game:
         fox.hold = 0.0
         fox.kiss = 0.0
         fox.held_by = None
+        fox.cage = 0.0
+        fox.cage_taps = 0
+        fox.sleep = 0.0
         fox.boost = 0.0
 
         self.npcs = [self._make_resident("janis"), self._make_resident("yolanta")]
@@ -275,6 +298,8 @@ class Game:
         self.chicken = None
         self.chicken_timer = CHICKEN_FIRST
         self.shards = []
+        self.beds = self._place_beds()
+        self.janis_catches = 0       # Walter's misdeeds: every 3rd catch -> the carrier
         self.pending = []        # vase noise: [time, shard cell] -> someone comes to check
 
         self.time_left = self.round_time      # None = no timer
@@ -307,7 +332,7 @@ class Game:
 
     def fox_free(self):
         f = self.fox
-        return f.stun <= 0 and f.hold <= 0 and f.kiss <= 0
+        return f.stun <= 0 and f.hold <= 0 and f.kiss <= 0 and f.cage <= 0 and f.sleep <= 0
 
     # --- map and collisions -------------------------------------------
     def solid(self, c, r):
@@ -479,8 +504,8 @@ class Game:
         for p in list(self.pending):
             if self.elapsed >= p[0]:
                 self.pending.remove(p)
-                if any((s.c, s.r) == p[1] for s in self.shards):
-                    self._vase_responder(p[1])
+                if any((s.c, s.r) == p[1] for s in self.shards) and not self._vase_responder(p[1]):
+                    self.pending.append([self.elapsed + 0.5, p[1]])     # both busy: whoever is free first comes
 
         self._update_cat(dt, inp["cat"])
         self._update_fox(dt, inp["fox"])
@@ -527,6 +552,10 @@ class Game:
                 self._travel(*d)
             return
 
+        if cat.sleep > 0:
+            cat.sleep -= dt
+            cat.moving = False
+            return
         if cat.hold > 0:
             cat.hold -= dt
             cat.moving = False
@@ -634,6 +663,22 @@ class Game:
         fox.boost = max(0.0, fox.boost - dt)
         for d in self.doors.values():
             d.scratching = False
+        if fox.cage > 0:                           # in the pet carrier: tap to get out
+            fox.cage -= dt
+            fox.moving = False
+            if fi.get("act"):
+                fox.cage_taps += 1
+                self.events.append(("tap", fox.x, fox.y))
+                if fox.cage_taps >= CARRIER_TAPS:
+                    fox.cage = 0.0
+            if fox.cage <= 0:
+                fox.cage = 0.0
+                self.events.append(("escape", fox.x, fox.y))
+            return
+        if fox.sleep > 0:
+            fox.sleep -= dt
+            fox.moving = False
+            return
         if fox.stun > 0:
             fox.stun -= dt
             fox.moving = False
@@ -689,8 +734,35 @@ class Game:
             else:
                 d.scratch = max(0.0, d.scratch - dt * 0.5)
 
+    def _place_beds(self):
+        dist_map, _ = self._bfs(CAT_SPAWN)
+        fox_map, _ = self._bfs(FOX_SPAWN)
+        cands = [c for c, d in dist_map.items() if is_floor(*c) and d >= 6 and fox_map.get(c, 0) >= 6
+                 and c not in SWITCHES]
+        beds = []
+        for _ in range(BEDS):
+            far = [c for c in cands if all(abs(c[0] - b.c) + abs(c[1] - b.r) >= 10 for b in beds)] or cands
+            if far:
+                beds.append(Bed(*self.rng.choice(far)))
+        return beds
+
     def _update_items(self, dt):
         cat, fox = self.cat, self.fox
+        # comfy pet beds
+        for b in self.beds:
+            b.cool = max(0.0, b.cool - dt)
+            if b.cool > 0:
+                continue
+            bx, by = b.center
+            if not cat.hidden and cat.sleep <= 0 and cat.hold <= 0 and dist_to(cat, bx, by) < 14:
+                cat.sleep, b.cool = SLEEP_TIME, BED_REST
+                cat.x, cat.y = bx, by
+                self.events.append(("sleep", bx, by))
+            elif self.fox_free() and dist_to(fox, bx, by) < 14:
+                fox.sleep, b.cool = SLEEP_TIME, BED_REST
+                fox.dash_t = 0
+                fox.x, fox.y = bx, by
+                self.events.append(("sleep", bx, by))
         # fish
         self.fish_timer = max(0.0, self.fish_timer - dt)
         if len(self.fish) < FISH_ON_MAP and self.fish_timer <= 0:
@@ -756,7 +828,7 @@ class Game:
                 self._remove(n)
                 continue
             self._chase(n, fox, dt)
-            if fox.stun <= 0 and dist(n, fox) < BLACKCAT_REACH:
+            if fox.stun <= 0 and fox.cage <= 0 and dist(n, fox) < BLACKCAT_REACH:
                 fox.hearts -= 1
                 fox.stun = FOX_HIT_STUN
                 fox.eat = 0
@@ -808,7 +880,7 @@ class Game:
     def _spawn_janis(self, blackout):
         """The lights went out: Janis heads for the nearest switch."""
         j = self.npc("janis")
-        if not j:
+        if not j or j.carrying:
             return
         dist_map, _ = self._bfs(cell_of(j))
         sw = min(SWITCHES, key=lambda c: dist_map.get(c, 999))
@@ -820,15 +892,36 @@ class Game:
         dist_map, _ = self._bfs(cell)
         free = [n for n in self.npcs if n.kind in ("janis", "yolanta") and n.mode == "patrol" and n.holding <= 0]
         if not free:
-            return
+            return False
         n = min(free, key=lambda n: dist_map.get(cell_of(n), 999))
         n.mode, n.goal_cell, n.goal, n.target = "vase", cell, Item(*cell_center(*cell)), None
         self.events.append(("helper_in_" + n.kind, n.x, n.y))
+        return True
 
     def _update_resident(self, n, dt):
         cat, fox = self.cat, self.fox
         for k in n.ignore:
             n.ignore[k] = max(0.0, n.ignore[k] - dt)
+        if n.carrying:                                  # walking Walter to the pet carrier
+            fox.hold, fox.held_by = 1.0, "janis"
+            n.speed = JANIS_SPEED
+            self._chase(n, n.goal, dt)
+            fox.x, fox.y = n.x, n.y
+            if dist(n, n.goal) < 8:
+                n.carrying = False
+                fox.hold = 0.0
+                fox.x, fox.y = n.goal.x, n.goal.y
+                fox.cage, fox.cage_taps = CARRIER_TIME, 0
+                n.ignore["fox"] = RES_IGNORE + CARRIER_TIME
+                n.victim = n.target = None
+                n.mode = "patrol"                       # and off he goes, out of the way
+                n.goal_cell = self.rng.choice(self._zone_cells("janis"))
+                n.goal, n.pause = Item(*cell_center(*n.goal_cell)), 0.0
+                self.events.append(("carrier", fox.x, fox.y))
+                bo = next((b for b in self.blackouts if b[0] <= self.elapsed < b[1]), None)
+                if bo is not None:                      # it got dark meanwhile: off to the switch
+                    self._spawn_janis(bo)
+            return
         if n.holding > 0:
             n.holding -= dt
             n.moving = False
@@ -934,6 +1027,15 @@ class Game:
             fox.held_by = n.kind
             fox.dash_t = 0
             n.victim = "fox"
+            if n.kind == "janis":
+                self.janis_catches += 1
+                if self.janis_catches >= CARRIER_AFTER:     # "That's it, young man. The carrier."
+                    self.janis_catches = 0
+                    n.holding = 0.0
+                    n.carrying = True
+                    n.goal_cell = LEVEL["carrier"]
+                    n.goal = Item(*cell_center(*n.goal_cell))
+                    self.events.append(("to_carrier", fox.x, fox.y))
             self.events.append(("grab_janis_fox" if n.kind == "janis" else "grab_yolanta", fox.x, fox.y))
 
     def _remove(self, n):

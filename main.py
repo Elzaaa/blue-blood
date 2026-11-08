@@ -16,7 +16,7 @@ import sprites
 import logic
 from logic import (COLS, ROWS, TILE, BLACKCAT_COOLDOWN, DASH_COOLDOWN,
                    FISH_WIN, FOX_HEARTS, GRAN_COOLDOWN, GRAN_HOLD, SCRATCH_TIME,
-                   SNIFF_TIME, WARD_MAX, JANIS_HOLD, JANIS_KISS, Game, cell_center)
+                   SNIFF_TIME, WARD_MAX, JANIS_HOLD, JANIS_KISS, CARRIER_TAPS, Game, cell_center)
 
 HUD_H = 48
 W, H = COLS * TILE, ROWS * TILE + HUD_H
@@ -187,6 +187,74 @@ def draw_wardrobe(surf, w, i, t, rustle):
     pygame.draw.circle(surf, GOLD, (body.centerx + 3, body.centery + 4), 2)
     if w.sniff > 0:
         bar(surf, x, y - 20, TILE, 5, w.sniff / SNIFF_TIME, FOX_COL)
+
+
+def draw_pet_bed(surf, b):
+    """A very fancy pet bed for a manor: carved gilt frame on little legs, tufted velvet cushion,
+    a lace pillow and tassels. Step on it and you doze off."""
+    x, y = b.c * TILE + 16, b.r * TILE + HUD_H + 16
+    used = b.cool > 0
+    gold, gold_d, gold_l = (206, 172, 96), (140, 108, 52), (240, 214, 150)
+    velvet = (150, 92, 112) if not used else (128, 92, 104)
+    for lx in (x - 13, x + 11):                                     # little carved legs
+        pygame.draw.rect(surf, gold_d, (lx, y + 6, 3, 6))
+        pygame.draw.circle(surf, gold, (lx + 1, y + 12), 2)
+    frame = pygame.Rect(x - 18, y - 12, 36, 22)
+    pygame.draw.ellipse(surf, (40, 30, 26), frame.move(0, 2))
+    pygame.draw.ellipse(surf, gold, frame)
+    pygame.draw.ellipse(surf, gold_d, frame, 1)
+    for k in range(-14, 16, 6):                                     # carved scallops on the rim
+        pygame.draw.circle(surf, gold_l, (x + k, y - 10 + abs(k) // 5), 2)
+    cushion = frame.inflate(-8, -8)
+    pygame.draw.ellipse(surf, velvet, cushion)
+    pygame.draw.ellipse(surf, tuple(min(255, v + 26) for v in velvet), cushion.inflate(-10, -6))
+    for bx, by in ((x - 6, y - 3), (x + 6, y - 3), (x, y + 1), (x - 6, y + 4), (x + 6, y + 4)):
+        pygame.draw.circle(surf, tuple(max(0, v - 40) for v in velvet), (bx, by - 1), 1)     # tufting
+    if not used:
+        pygame.draw.ellipse(surf, (248, 242, 230), (x + 3, y - 8, 11, 7))                  # lace pillow
+        pygame.draw.ellipse(surf, (220, 210, 196), (x + 3, y - 8, 11, 7), 1)
+    else:
+        pygame.draw.ellipse(surf, tuple(max(0, v - 20) for v in velvet), (x - 6, y - 4, 12, 7))  # a warm dent
+    for tx in (x - 9, x + 9):                                       # tassels
+        pygame.draw.line(surf, gold_d, (tx, y + 9), (tx, y + 13))
+        pygame.draw.rect(surf, gold, (tx - 1, y + 13, 3, 4))
+    pygame.draw.polygon(surf, (236, 150, 180), [(x - 2, y + 9), (x - 6, y + 6), (x - 6, y + 12)])   # bow
+    pygame.draw.polygon(surf, (236, 150, 180), [(x + 2, y + 9), (x + 6, y + 6), (x + 6, y + 12)])
+    pygame.draw.circle(surf, (210, 120, 150), (x, y + 9), 2)
+
+
+def draw_carrier(surf, cx, cy, pet=None, tap=0.0):
+    """A big pet carrier. With Walter inside, he shows through the grille and paws at the door."""
+    rattle = int(round(math.sin(tap * 80))) if tap > 0 else 0
+    box = pygame.Rect(0, 0, 58, 42)
+    box.midbottom = (cx, cy + 14)
+    sh = pygame.Surface((box.w - 4, 9), pygame.SRCALPHA)
+    pygame.draw.ellipse(sh, (0, 0, 0, 70), sh.get_rect())
+    surf.blit(sh, (box.x + 2, box.bottom - 5))
+    pygame.draw.rect(surf, (52, 44, 38), box.inflate(2, 2), border_radius=8)
+    pygame.draw.rect(surf, (222, 210, 184), box, border_radius=8)
+    pygame.draw.rect(surf, (196, 182, 154), (box.x, box.bottom - 8, box.w, 8), border_radius=6)
+    pygame.draw.line(surf, (196, 182, 154), (box.x + 3, box.y + 11), (box.right - 4, box.y + 11), 2)
+    pygame.draw.arc(surf, (96, 84, 72), (box.centerx - 11, box.y - 11, 22, 18), 0, math.pi, 4)     # handle
+    for k in (box.x + 6, box.x + 10, box.right - 11, box.right - 7):                                # air slots
+        pygame.draw.line(surf, (170, 156, 130), (k, box.y + 16), (k, box.y + 28), 2)
+    door = pygame.Rect(0, 0, 30, 26)
+    door.center = (box.centerx + rattle, box.centery + 2)
+    pygame.draw.rect(surf, (46, 38, 36), door, border_radius=4)
+    if pet is not None:
+        surf.set_clip(door)
+        surf.blit(pet, pet.get_rect(midtop=(door.centerx - 2, door.y + 1)))
+        surf.set_clip(None)
+    for k in range(door.x + 6, door.right - 3, 6):
+        pygame.draw.line(surf, (88, 80, 74), (k, door.y + 1), (k, door.bottom - 2), 1)
+    pygame.draw.rect(surf, (88, 80, 74), door, 2, border_radius=4)
+    pygame.draw.circle(surf, (150, 140, 128), (door.right - 3, door.centery), 2)                    # latch
+    if pet is not None and tap > 0:                                     # paw tapping at the door
+        px, py = door.right - 9, door.bottom - 13
+        pygame.draw.rect(surf, (28, 22, 30), (px - 1, py - 1, 8, 9), border_radius=2)
+        pygame.draw.rect(surf, (236, 112, 36), (px, py, 6, 7), border_radius=2)
+        pygame.draw.rect(surf, (40, 30, 30), (px, py + 5, 6, 2))
+    return box
 
 
 def draw_shards(surf, s, t):
@@ -435,6 +503,7 @@ class Renderer:
         self.heart_t = 0.0
         self.idle = {}        # how long each character has been standing still
         self.big_hearts = []  # [x, y, life, size]
+        self.tap_t = 0.0      # Walter pawing at the carrier door
         self.viewer = None    # online: "cat" or "fox" (whose eyes we see the dark through)
         self.fish_icon = pygame.transform.scale(self.spr["fish"], (18, 10))
         self.fish_icon_dim = self.fish_icon.copy()
@@ -562,6 +631,19 @@ class Renderer:
                 self.popup("Mwah!", x, y - 44, (255, 150, 190))
                 self.big_hearts.append([x, y - 30, 1.0, 0.7])
                 self.shake = 0.15
+            elif kind == "to_carrier":
+                self.popup("That's it, Walter. The carrier!", x, y - 50, (200, 210, 255))
+            elif kind == "carrier":
+                self.popup("In you go!", x, y - 60, (200, 210, 255))
+                self.fx.burst(x, y, (220, 210, 190), 16, 90, 0.5, 3)
+            elif kind == "escape":
+                self.popup("Free!", x, y - 40, (255, 200, 120))
+                self.fx.burst(x, y, (255, 200, 120), 18, 120, 0.6, 3)
+            elif kind == "tap":
+                self.tap_t = 0.18
+                self.fx.burst(x + 12, y - 4, (255, 236, 170), 4, 70, 0.3, 2)
+            elif kind == "sleep":
+                self.popup("Zzz...", x, y - 30, (200, 210, 255))
             elif kind == "tidy":
                 self.fx.burst(x, y, (240, 240, 250), 14, 80, 0.5, 2)
                 self.popup("Tidy!", x, y - 30, (230, 230, 240))
@@ -704,6 +786,20 @@ class Renderer:
                 scr.blit(self.spr["vase"], self.spr["vase"].get_rect(midbottom=(int(x), int(y) + HUD_H + 4)))
         for i, w in enumerate(g.wardrobes):
             draw_wardrobe(scr, w, i, self.t, g.cat.hidden)
+        for b in g.beds:
+            draw_pet_bed(scr, b)
+        self.tap_t = max(0.0, self.tap_t - dt)
+        if "carrier" in logic.LEVEL:
+            ccx, ccy = cell_center(*logic.LEVEL["carrier"])
+            caged = g.fox.cage > 0
+            cbox = draw_carrier(scr, int(ccx), int(ccy) + HUD_H,
+                                self.spr["fox_held"][1] if caged else None, self.tap_t)
+            if caged:                                                   # tap tap tap!
+                bar(scr, cbox.centerx - 24, cbox.y - 22, 48, 5, g.fox.cage_taps / CARRIER_TAPS, (255, 200, 120))
+                kr = self.key(cbox.centerx - 36, cbox.y - 52 - (2 if int(self.t * 8) % 2 else 0),
+                              SIDES[m.side_of("fox")]["names"][1], 22, self.f_small)
+                self.text("TAP!", self.f_mid, (255, 236, 170) if int(self.t * 8) % 2 else (255, 170, 90),
+                          topleft=(kr.right + 6, kr.y))
 
         for f in g.fish:
             img = self.spr["fish"]
@@ -730,7 +826,8 @@ class Renderer:
         carried = {}
         for role, b in (("cat", g.cat), ("fox", g.fox)):
             if b.hold > 0 and not (role == "cat" and g.cat.hidden):
-                holder = next((n for n in g.npcs if n.kind == b.held_by and n.holding > 0), None)
+                holder = next((n for n in g.npcs if n.kind == b.held_by
+                               and (n.holding > 0 or getattr(n, "carrying", False))), None)
                 if holder is not None:
                     carried[id(holder)] = (role, b)
         carried_bodies = {id(b) for _, b in carried.values()}
@@ -743,13 +840,23 @@ class Renderer:
             alpha = None
             if key in ("blackcat", "gran") and b.life < 1.5 and b.holding <= 0:
                 alpha = 255 if int(self.t * 10) % 2 else 110
+            if key == "fox" and g.fox.cage > 0:      # drawn inside the carrier
+                continue
+            if key in ("cat", "fox") and getattr(b, "sleep", 0) > 0:
+                fr = self.spr[key + "_sleep"][b.facing]
+                scr.blit(fr, fr.get_rect(midbottom=(int(b.x), int(b.y) + HUD_H + 8)))
+                zt = (self.t * 1.2) % 1.0
+                self.text("z", self.f_small, (220, 228, 255), center=(int(b.x) + 10 + int(zt * 8), int(b.y) + HUD_H - 18 - int(zt * 18)))
+                self.text("z", self.f_tiny, (220, 228, 255), center=(int(b.x) + 18, int(b.y) + HUD_H - 30 - int(zt * 10)))
+                continue
             r = self.draw_body(b, key, alpha, dt, closed_eyes=(key == "fox" and g.fox.kiss > 0))
             if id(b) in carried:
                 role, pet = carried[id(b)]
                 pr = self.draw_carried(r, b, role)
-                total = GRAN_HOLD if pet.held_by == "gran" else JANIS_HOLD
-                col = (150, 170, 240) if pet.held_by == "janis" else PINK
-                bar(scr, pr.centerx - 16, r.top - 10, 32, 5, pet.hold / total, col)
+                if not getattr(b, "carrying", False):
+                    total = GRAN_HOLD if pet.held_by == "gran" else JANIS_HOLD
+                    col = (150, 170, 240) if pet.held_by == "janis" else PINK
+                    bar(scr, pr.centerx - 16, r.top - 10, 32, 5, pet.hold / total, col)
                 if pet.held_by == "janis" and role == "fox" and int(self.t * 6) % 2:
                     self.fx.burst(pr.centerx, pr.top - HUD_H, (255, 120, 170), 1, 40, 0.8, 3)
                 continue
@@ -934,6 +1041,8 @@ class Renderer:
                           topleft=(44, 31))
             k = self.key(r.right + 10, 29, cat_side[1], 16, self.f_tiny)
             self.text("get out", self.f_tiny, PINK, topleft=(k.right + 4, 31))
+        elif g.cat.sleep > 0:
+            self.text("fast asleep on a comfy bed...", self.f_tiny, (200, 210, 255), topleft=(44, 31))
         elif g.cat.hold > 0:
             who = "Janis" if g.cat.held_by == "janis" else "Yolanta"
             self.text(f"{who} has you!", self.f_tiny, PINK, topleft=(44, 31))
@@ -962,7 +1071,13 @@ class Renderer:
         for i in range(FOX_HEARTS):
             img = self.spr["heart"] if i < g.fox.hearts else self.spr["heart_empty"]
             scr.blit(img, (r.right + 8 + i * 20, 8))
-        if g.fox.stun > 0:
+        if g.fox.cage > 0:
+            k = self.key(rx + 34, 29, fox_side[1], 16, self.f_tiny)
+            self.text(f"In the carrier! Tap to get out ({math.ceil(g.fox.cage)}s)", self.f_tiny,
+                      (255, 200, 120), topleft=(k.right + 4, 31))
+        elif g.fox.sleep > 0:
+            self.text("fast asleep...", self.f_tiny, (200, 210, 255), topleft=(rx + 34, 31))
+        elif g.fox.stun > 0:
             self.text("stunned!", self.f_tiny, (255, 230, 80), topleft=(rx + 34, 31))
         elif g.fox.kiss > 0:
             self.text("kissed by Janis!", self.f_tiny, (255, 140, 190), topleft=(rx + 34, 31))
@@ -1027,20 +1142,20 @@ class Renderer:
                   [("move", "Run"), ("action", "Door, vase or wardrobe"), ("perk", "Call the black cat")],
                   ["Smashed vases slow the fox, but the noise brings help",
                    "Hide in a wardrobe, sneak to another one",
-                   "The black cat chases the fox and takes a heart"], CAT_COL)
+                   "Careful: a comfy pet bed makes you doze off"], CAT_COL)
         role_card(pygame.Rect(W // 2 + 12, top, cw, ch), "fox", "WALTER THE FOX",
                   "Catch the kitten! You have 3 hearts",
                   [("move", "Run"), ("action", "Dash"), ("perk", "Call Yolanta to grab the kitten")],
                   ["Wait at a wardrobe to sniff out the kitten",
                    "Roast chicken makes you faster",
-                   "Push against a closed door to scratch through"], FOX_COL)
+                   "Caught by Janis 3 times: the carrier. Tap to get out"], FOX_COL)
 
         # the residents
         strip = pygame.Rect(W // 2 - cw - 12, top + ch + 14, cw * 2 + 24, 64)
         self.panel(strip, (120, 112, 128))
         show("janis", 1, strip.x + 36, strip.bottom - 8, 0.9)
         show("gran", 1, strip.x + 74, strip.bottom - 8, 0.9)
-        self.text("Janis and Yolanta wander the house and grab anyone they spot.",
+        self.text("Janis and Yolanta, Walter's owners, wander the house and grab anyone they spot.",
                   self.f_small, (236, 232, 224), topleft=(strip.x + 110, strip.y + 12))
         self.text("Janis adores Walter the fox. When the lights go out, he goes to switch them back on.",
                   self.f_small, (196, 190, 182), topleft=(strip.x + 110, strip.y + 36))

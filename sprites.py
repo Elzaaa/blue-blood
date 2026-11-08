@@ -252,6 +252,25 @@ FOX_HELD = [
     "...WW...",
 ]
 
+# Asleep on a pet bed: curled up, eyes closed.
+CAT_SLEEP = [
+    "..........O..O.",
+    "..........OOOO.",
+    "...OOoOOoOOooO.",
+    "..OOoOOoOOOOOOP",
+    "..OOOOOOOOOWWW.",
+    "..ooooooWW.....",
+]
+FOX_SLEEP = [
+    "..........k...k.",
+    "..........FF.FF.",
+    "...FFFFFF.FFFFF.",
+    "..FFFFFFFFFkFFFF",
+    ".FFFFFFFFFFFWWk.",
+    ".FFFFFFFFFFFWW..",
+    "...FFFFFFFFFFWW.",
+]
+
 # Extra poses for the idle animation. Blinking frames are made by closing the eyes.
 POSES = {
     "cat": {"sit": CAT_SIT, "tail": _KITTEN_TAIL_B + _KITTEN_TOP[6:] + _KITTEN_LEGS[0]},
@@ -430,6 +449,9 @@ def load_all():
     for key, rows in (("cat", CAT_HELD), ("fox", FOX_HELD)):
         surf = _load(f"{key}_held", rows, 2)
         s[key + "_held"] = {1: surf, -1: pygame.transform.flip(surf, True, False)}
+    for key, rows in (("cat", CAT_SLEEP), ("fox", FOX_SLEEP)):
+        surf = _load(f"{key}_sleep", rows, 2)
+        s[key + "_sleep"] = {1: surf, -1: pygame.transform.flip(surf, True, False)}
     s["star"] = _from_rows(STAR, 2)
     s["fish"] = _from_rows(FISH, 2)
     s["chicken"] = _from_rows(CHICKEN, 2)
