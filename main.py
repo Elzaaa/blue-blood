@@ -1,7 +1,7 @@
-"""Blue Blood — кот убегает, лис догоняет. Игра на двоих за одной клавиатурой.
+"""Blue Blood — the cat runs, the fox chases. A two-player game on one keyboard.
 
-Запуск на компьютере:   python main.py
-Сборка для браузера:    pygbag blueblood   (из папки над этой; см. README)
+Run on desktop:     python main.py
+Build for browser:  pygbag blueblood   (from the parent folder; see README)
 """
 import asyncio
 import math
@@ -12,14 +12,14 @@ import pygame
 import sprites
 from logic import (COLS, MAP, ROWS, TILE, BLACKCAT_COOLDOWN, DASH_COOLDOWN,
                    FISH_WIN, FOX_HEARTS, GRAN_COOLDOWN, GRAN_HOLD, SCRATCH_TIME,
-                   SNIFF_TIME, WARD_MAX, Game, cell_center)
+                   SNIFF_TIME, WARD_MAX, JANIS_HOLD, JANIS_KISS, SWITCHES, Game, cell_center)
 
 HUD_H = 52
 W, H = COLS * TILE, ROWS * TILE + HUD_H
 WINS_NEEDED = 3
 
-# --- управление: у каждого игрока своя сторона клавиатуры --------------
-# Используем физические клавиши (scancode) — работает при любой раскладке, хоть русской.
+# --- controls: each player gets their own side of the keyboard ----------
+# Physical keys (scancodes) are used, so it works with any keyboard layout.
 SIDES = [
     dict(up=pygame.KSCAN_W, down=pygame.KSCAN_S, left=pygame.KSCAN_A, right=pygame.KSCAN_D,
          act=(pygame.KSCAN_E, pygame.KSCAN_SPACE), summon=(pygame.KSCAN_Q,),
@@ -35,12 +35,12 @@ CAT_COL = (222, 172, 128)
 FOX_COL = (255, 128, 48)
 PINK = (240, 140, 180)
 
-# --- особняк: цвета ---------------------------------------------------------
+# --- manor: colors -----------------------------------------------------------
 GOLD = (222, 184, 92)
 GOLD_D = (150, 116, 50)
 WALL = (58, 40, 48)
 WALL_D = (46, 31, 38)
-DOOR_C = (120, 58, 44)      # красное дерево
+DOOR_C = (120, 58, 44)      # mahogany
 DOOR_D = (74, 34, 28)
 
 WALLPAPER = {
@@ -52,7 +52,7 @@ PARQUET = {
     "dining": ((188, 140, 90), (160, 116, 72)),
     "library": ((124, 82, 52), (100, 64, 40)),
 }
-# украшения на стенах: (колонка, ряд стены) -> что висит
+# wall decorations: (column, wall row) -> what hangs there
 DECOR = {
     (4, 0): "window", (11, 0): "portrait", (14, 0): "fireplace", (19, 0): "portrait", (22, 0): "window",
     (2, 5): "portrait", (6, 5): "sconce", (8, 5): "portrait", (10, 5): "sconce", (14, 5): "sconce",
@@ -60,7 +60,7 @@ DECOR = {
     (5, 9): "mirror", (19, 9): "portrait", (18, 9): "sconce", (21, 9): "sconce",
 }
 FIREPLACES = [c for c, k in DECOR.items() if k == "fireplace"]
-FACE_H = 18   # высота видимой «стенки» с обоями
+FACE_H = 18   # height of the visible wallpapered wall face
 
 
 def room_of(c, r):
@@ -78,13 +78,13 @@ def shade(col, d):
 def draw_floor(surf, c, r):
     x, y = c * TILE, r * TILE
     room = room_of(c, r)
-    if room == "kitchen":      # терракотовая плитка
+    if room == "kitchen":      # terracotta tiles
         for i in range(2):
             for j in range(2):
                 col = (196, 108, 76) if (i + j) % 2 == 0 else (182, 96, 66)
                 pygame.draw.rect(surf, col, (x + i * 16, y + j * 16, 16, 16))
                 pygame.draw.rect(surf, (150, 80, 56), (x + i * 16, y + j * 16, 16, 16), 1)
-    elif room == "hall":       # мраморные шашечки
+    elif room == "hall":       # marble checkerboard
         for i in range(2):
             for j in range(2):
                 light = (c * 2 + i + r * 2 + j) % 2 == 0
@@ -93,7 +93,7 @@ def draw_floor(surf, c, r):
                 if light and (c + r + i) % 3 == 0:
                     pygame.draw.line(surf, (200, 196, 190), (x + i * 16 + 3, y + j * 16 + 12),
                                      (x + i * 16 + 12, y + j * 16 + 5))
-    elif room == "bath":       # белый мрамор с прожилками
+    elif room == "bath":       # veined white marble
         pygame.draw.rect(surf, (236, 238, 240), (x, y, TILE, TILE))
         rnd = random.Random(c * 13 + r * 7)
         for _ in range(2):
@@ -101,13 +101,13 @@ def draw_floor(surf, c, r):
             pygame.draw.line(surf, (204, 208, 216), (x1, y1),
                              (min(x + 31, x1 + rnd.randint(4, 14)), min(y + 31, y1 + rnd.randint(-6, 8))))
         pygame.draw.rect(surf, (214, 218, 224), (x, y, TILE, TILE), 1)
-    elif room == "bedroom":    # ковёр с узором
+    elif room == "bedroom":    # patterned carpet
         pygame.draw.rect(surf, (118, 42, 58), (x, y, TILE, TILE))
         for i in range(4):
             for j in range(4):
                 if (i + j) % 2 == 0:
                     pygame.draw.rect(surf, (142, 62, 74), (x + i * 8 + 3, y + j * 8 + 3, 2, 2))
-    else:                      # паркет-плетёнка
+    else:                      # basket-weave parquet
         light, dark = PARQUET[room]
         for i in range(2):
             for j in range(2):
@@ -131,7 +131,7 @@ def draw_rug(surf, rect, base, border, accent):
     s = min(inner.w, inner.h) // 3
     pygame.draw.polygon(surf, accent, [(cx, cy - s), (cx + s * 1.4, cy), (cx, cy + s), (cx - s * 1.4, cy)], 2)
     pygame.draw.polygon(surf, border, [(cx, cy - s // 2), (cx + s * 0.7, cy), (cx, cy + s // 2), (cx - s * 0.7, cy)])
-    for k in range(rect.x + 2, rect.right - 2, 4):     # бахрома
+    for k in range(rect.x + 2, rect.right - 2, 4):     # fringe
         pygame.draw.line(surf, (230, 220, 200), (k, rect.y - 3), (k, rect.y))
         pygame.draw.line(surf, (230, 220, 200), (k, rect.bottom), (k, rect.bottom + 3))
 
@@ -150,7 +150,7 @@ def draw_wall(surf, c, r):
         pygame.draw.line(surf, shade(paper, -16), (x + k, fy + 2), (x + k, y + TILE - 5))
         pygame.draw.circle(surf, shade(paper, 14), (x + k, fy + 7), 1)
     pygame.draw.line(surf, GOLD, (x, fy), (x + TILE, fy))
-    pygame.draw.rect(surf, (70, 40, 32), (x, y + TILE - 4, TILE, 4))     # плинтус
+    pygame.draw.rect(surf, (70, 40, 32), (x, y + TILE - 4, TILE, 4))     # skirting board
     kind = DECOR.get((c, r))
     if kind == "portrait":
         rnd = random.Random(c * 7 + r)
@@ -174,7 +174,7 @@ def draw_wall(surf, c, r):
         pygame.draw.rect(surf, (156, 196, 232), fr.inflate(-4, -4))
         pygame.draw.line(surf, (70, 40, 32), (fr.centerx, fr.y), (fr.centerx, fr.bottom))
         pygame.draw.line(surf, (70, 40, 32), (fr.x, fr.centery), (fr.right, fr.centery))
-        pygame.draw.rect(surf, (140, 30, 46), (x + 2, fy - 9, 6, 24))     # шторы
+        pygame.draw.rect(surf, (140, 30, 46), (x + 2, fy - 9, 6, 24))     # curtains
         pygame.draw.rect(surf, (140, 30, 46), (x + 24, fy - 9, 6, 24))
         pygame.draw.line(surf, GOLD, (x + 1, fy - 10), (x + 31, fy - 10), 2)
     elif kind == "mirror":
@@ -185,7 +185,7 @@ def draw_wall(surf, c, r):
     elif kind == "fireplace":
         pygame.draw.rect(surf, (206, 196, 180), (x + 1, y + 6, 30, TILE - 6))
         pygame.draw.rect(surf, (170, 160, 146), (x + 1, y + 6, 30, TILE - 6), 1)
-        pygame.draw.rect(surf, (226, 218, 204), (x - 1, y + 5, 34, 4))      # полка
+        pygame.draw.rect(surf, (226, 218, 204), (x - 1, y + 5, 34, 4))      # mantelpiece
         pygame.draw.rect(surf, (24, 18, 18), (x + 8, y + 14, 16, TILE - 14))
         pygame.draw.rect(surf, GOLD, (x + 7, y + 13, 18, 2))
 
@@ -200,22 +200,22 @@ def run_len(c, r, ch):
 def draw_furniture(surf, c, r, ch):
     x, y = c * TILE, r * TILE
     room = room_of(c, r)
-    if ch == "f" and room == "kitchen" and r == 1:            # мраморная столешница
+    if ch == "f" and room == "kitchen" and r == 1:            # marble countertop
         pygame.draw.rect(surf, (226, 214, 184), (x, y, TILE, TILE - 2))
         pygame.draw.rect(surf, (150, 130, 100), (x, y, TILE, TILE - 2), 1)
         pygame.draw.rect(surf, (228, 228, 234), (x, y, TILE, 9))
         pygame.draw.line(surf, (190, 190, 200), (x, y + 9), (x + TILE, y + 9))
         pygame.draw.circle(surf, GOLD, (x + 16, y + 18), 2)
-        if c == 6:                                           # плита
+        if c == 6:                                           # stove
             pygame.draw.rect(surf, (40, 40, 46), (x + 2, y + 1, 28, 8))
             pygame.draw.circle(surf, (90, 90, 100), (x + 9, y + 5), 3, 1)
             pygame.draw.circle(surf, (90, 90, 100), (x + 22, y + 5), 3, 1)
-    elif ch == "f" and room == "kitchen":                    # кухонный стол
+    elif ch == "f" and room == "kitchen":                    # kitchen table
         pygame.draw.rect(surf, (90, 56, 34), (x + 3, y + 6, 26, 22))
         pygame.draw.rect(surf, (156, 106, 64), (x + 3, y + 4, 26, 20))
         pygame.draw.rect(surf, (240, 236, 226), (x + 9, y + 8, 14, 10), border_radius=3)
         pygame.draw.ellipse(surf, (210, 160, 90), (x + 11, y + 9, 10, 7))
-    elif ch == "f" and room == "library":                    # книжный стеллаж
+    elif ch == "f" and room == "library":                    # bookshelf
         rnd = random.Random(c * 5 + r)
         sh = pygame.Rect(x + 1, y - 8, 30, TILE + 6)
         pygame.draw.rect(surf, (64, 38, 26), sh)
@@ -229,7 +229,7 @@ def draw_furniture(surf, c, r, ch):
                 pygame.draw.rect(surf, col, (xx, yy + 9 - h, w, h))
                 xx += w + 1
             pygame.draw.line(surf, (96, 60, 40), (sh.x, yy + 9), (sh.right - 1, yy + 9), 2)
-    elif ch == "f" and room == "dining" and r == 11:         # длинный обеденный стол
+    elif ch == "f" and room == "dining" and r == 11:         # long dining table
         if c > 0 and MAP[r][c - 1] == "f":
             return
         n = run_len(c, r, "f")
@@ -248,27 +248,27 @@ def draw_furniture(surf, c, r, ch):
         for dx in (-6, 0, 6):
             pygame.draw.rect(surf, (250, 248, 236), (cx + dx - 1, y + 8, 2, 7))
             pygame.draw.circle(surf, (255, 200, 80), (cx + dx, y + 7), 2)
-    elif ch == "f" and room == "salon":                      # кресло
+    elif ch == "f" and room == "salon":                      # armchair
         pygame.draw.rect(surf, (30, 60, 46), (x + 4, y + 4, 24, 25), border_radius=6)
         pygame.draw.rect(surf, (52, 110, 80), (x + 5, y + 3, 22, 23), border_radius=6)
         pygame.draw.rect(surf, (40, 90, 64), (x + 5, y + 3, 22, 8), border_radius=6)
         pygame.draw.rect(surf, (70, 136, 100), (x + 9, y + 12, 14, 10), border_radius=3)
         pygame.draw.rect(surf, GOLD, (x + 6, y + 27, 3, 3))
         pygame.draw.rect(surf, GOLD, (x + 23, y + 27, 3, 3))
-    elif ch == "f":                                          # комод
+    elif ch == "f":                                          # chest of drawers
         pygame.draw.rect(surf, (60, 28, 22), (x + 2, y + 4, 28, 26), border_radius=2)
         pygame.draw.rect(surf, (118, 56, 42), (x + 3, y + 3, 26, 24), border_radius=2)
         for k in (10, 18):
             pygame.draw.line(surf, (80, 36, 28), (x + 4, y + k), (x + 27, y + k))
             pygame.draw.circle(surf, GOLD, (x + 16, y + k + 4), 1)
         pygame.draw.ellipse(surf, (210, 214, 224), (x + 8, y + 1, 16, 6))
-    elif ch == "v":                                          # мраморный постамент
+    elif ch == "v":                                          # marble pedestal
         pygame.draw.rect(surf, (170, 170, 178), (x + 9, y + 26, 14, 4))
         pygame.draw.rect(surf, (236, 236, 240), (x + 11, y + 14, 10, 13))
         pygame.draw.line(surf, (200, 200, 208), (x + 15, y + 15), (x + 15, y + 25))
         pygame.draw.ellipse(surf, (170, 170, 178), (x + 5, y + 11, 22, 7))
         pygame.draw.ellipse(surf, (244, 244, 248), (x + 5, y + 10, 22, 6))
-    elif ch == "s":                                          # диван-честерфилд
+    elif ch == "s":                                          # chesterfield sofa
         pygame.draw.rect(surf, (70, 20, 30), (x - 6, y + 3, 44, 27), border_radius=7)
         pygame.draw.rect(surf, (134, 36, 52), (x - 5, y + 2, 42, 24), border_radius=7)
         pygame.draw.rect(surf, (112, 28, 44), (x - 5, y + 2, 42, 9), border_radius=7)
@@ -276,7 +276,7 @@ def draw_furniture(surf, c, r, ch):
             pygame.draw.circle(surf, (90, 22, 36), (x - 1 + k * 11, y + 16), 1)
         pygame.draw.rect(surf, GOLD, (x - 3, y + 27, 3, 3))
         pygame.draw.rect(surf, GOLD, (x + 32, y + 27, 3, 3))
-    elif ch == "b":                                          # кровать с балдахином
+    elif ch == "b":                                          # canopy bed
         if (c > 0 and MAP[r][c - 1] == "b") or (r > 0 and MAP[r - 1][c] == "b"):
             return
         w = run_len(c, r, "b")
@@ -296,7 +296,7 @@ def draw_furniture(surf, c, r, ch):
         for px, py in ((bed.x, bed.y), (bed.right - 5, bed.y), (bed.x, bed.bottom - 5), (bed.right - 5, bed.bottom - 5)):
             pygame.draw.rect(surf, (90, 46, 30), (px, py, 5, 5))
             pygame.draw.circle(surf, GOLD, (px + 2, py + 2), 1)
-    elif ch == "p":                                          # пальма в фарфоровом горшке
+    elif ch == "p":                                          # palm in a porcelain pot
         pygame.draw.rect(surf, (236, 238, 244), (x + 10, y + 19, 12, 11), border_radius=2)
         pygame.draw.line(surf, (60, 90, 170), (x + 10, y + 23), (x + 21, y + 23), 2)
         for a in range(7):
@@ -312,7 +312,7 @@ def build_background():
         for c in range(COLS):
             if MAP[r][c] != "#":
                 draw_floor(bg, c, r)
-    # ковры
+    # rugs
     draw_rug(bg, pygame.Rect(10 * TILE + 4, 2 * TILE + 2, 5 * TILE - 8, 3 * TILE - 6),
              (140, 36, 44), (40, 50, 100), GOLD)
     draw_rug(bg, pygame.Rect(18 * TILE + 2, 10 * TILE + 8, 5 * TILE - 4, 3 * TILE - 16),
@@ -342,8 +342,8 @@ def draw_fire(surf, t):
 
 
 
-# --- прежнее оформление «Дом» (переключается клавишей T в меню) -------------
-STYLE = {"name": "manor"}       # "manor" — особняк, "classic" — простой дом
+# --- the original "House" look (toggle with T in the menu) -----------------
+STYLE = {"name": "manor"}       # "manor" or "classic" (simple house)
 CLASSIC_DOOR = ((150, 86, 40), (110, 60, 28), (240, 210, 90))
 MANOR_DOOR = (DOOR_C, DOOR_D, GOLD)
 
@@ -493,7 +493,7 @@ def bar(surf, x, y, w, h, frac, col):
     pygame.draw.rect(surf, col, (x, y, int(w * max(0.0, min(1.0, frac))), h), border_radius=2)
 
 
-# --- эффекты -------------------------------------------------------------
+# --- effects ----------------------------------------------------------------
 class Spot:
     def __init__(self, x, y):
         self.x, self.y = x, y
@@ -524,7 +524,7 @@ class Particles:
             pygame.draw.rect(surf, col, (int(x) - s // 2, int(y) + HUD_H - s // 2, s, s))
 
 
-# --- ввод ----------------------------------------------------------------
+# --- input ------------------------------------------------------------------
 def read_side(held, keys, side):
     k = SIDES[side]
     return {
@@ -536,7 +536,7 @@ def read_side(held, keys, side):
 
 
 class Match:
-    """Счёт матча. Роли меняются каждый раунд."""
+    """Match score. Roles swap every round."""
     def __init__(self):
         self.wins = [0, 0]
         self.cat_player = 0
@@ -561,12 +561,13 @@ class Match:
                 "fox": read_side(held, keys, 1 - self.cat_player)}
 
 
-# --- отрисовка -----------------------------------------------------------
+# --- rendering --------------------------------------------------------------
 class Renderer:
     def __init__(self, screen):
         self.screen = screen
         self.bgs = {"manor": build_background(), "classic": build_background_classic()}
         self.spr = sprites.load_all()
+        self.spr["yolanta"] = self.spr["gran"]     # Yolanta as a house resident (vase noise)
         self.f_tiny = pygame.font.Font(None, 19)
         self.f_small = pygame.font.Font(None, 22)
         self.f_mid = pygame.font.Font(None, 30)
@@ -622,12 +623,12 @@ class Renderer:
             elif kind == "crash":
                 self.fx.burst(x, y, (150, 200, 240), 24, 170, 0.7, 3)
                 self.fx.burst(x, y, (70, 160, 80), 6, 90, 0.6, 3)
-                self.popup("CLANG!", x, y - 20, (150, 200, 240))
+                self.popup("CRASH!", x, y - 20, (150, 200, 240))
                 self.shake = 0.2
             elif kind in ("ward_in", "ward_out"):
                 self.fx.burst(x, y + 10, (180, 150, 120), 10, 70, 0.4, 3)
             elif kind == "empty":
-                self.popup("Empty!", x, y - 26, (230, 230, 230))
+                self.popup("empty!", x, y - 26, (230, 230, 230))
             elif kind == "fish":
                 self.fx.burst(x, y, (120, 180, 236), 16, 120, 0.6, 3)
                 self.popup("+1", x, y - 16, (150, 210, 255))
@@ -635,7 +636,7 @@ class Renderer:
                 self.fx.burst(x, y, (255, 220, 160), 10, 70, 0.5, 2)
             elif kind == "chomp":
                 self.fx.burst(x, y, (206, 128, 56), 14, 90, 0.6, 3)
-                self.popup("Yum!", x, y - 20, (255, 200, 120))
+                self.popup("yum!", x, y - 20, (255, 200, 120))
             elif kind == "summon_blackcat":
                 self.fx.burst(x, y, (90, 70, 120), 26, 150, 0.7, 5)
                 self.fx.burst(x, y, (250, 214, 60), 10, 90, 0.5, 2)
@@ -646,10 +647,34 @@ class Renderer:
                 self.fx.burst(x, y, (200, 200, 210), 16, 100, 0.5, 4)
             elif kind == "hold":
                 self.fx.burst(x, y, PINK, 16, 110, 0.6, 3)
+                self.popup("There you are!", x, y - 30, PINK)
+            elif kind == "helper_in_janis":
+                self.fx.burst(x, y, (200, 200, 210), 18, 110, 0.6, 4)
+                self.popup("I say!", x, y - 34, (200, 210, 255))
+            elif kind == "helper_in_yolanta":
+                self.fx.burst(x, y, (220, 200, 240), 18, 110, 0.6, 4)
+                self.popup("What was that?!", x, y - 34, PINK)
+            elif kind == "grab_janis":
+                self.fx.burst(x, y, (120, 140, 220), 16, 110, 0.6, 3)
+                self.popup("Gotcha!", x, y - 30, (200, 210, 255))
+                self.shake = 0.15
+            elif kind == "grab_yolanta":
+                self.fx.burst(x, y, PINK, 16, 110, 0.6, 3)
+                self.popup("There you are!", x, y - 30, PINK)
+                self.shake = 0.15
+            elif kind == "tidy":
+                self.fx.burst(x, y, (240, 240, 250), 14, 80, 0.5, 2)
+                self.popup("Tidy!", x, y - 30, (230, 230, 240))
+            elif kind == "kiss":
+                self.fx.burst(x, y - 10, (255, 120, 170), 30, 140, 1.0, 4)
+                self.popup("Mwah!", x, y - 34, (255, 140, 190))
+            elif kind == "lights_on":
+                self.popup("Lights on!", W // 2, 40, (255, 240, 160))
+                self.fx.burst(x, y - 20, (255, 240, 160), 20, 120, 0.6, 3)
             elif kind == "hit_fox":
                 self.fx.burst(x, y, (232, 52, 72), 24, 170, 0.8, 4)
                 self.fx.burst(x, y, (255, 230, 80), 12, 120, 0.6, 3)
-                self.popup("-1 сердечко", x, y - 26, (255, 90, 110))
+                self.popup("-1 heart", x, y - 26, (255, 90, 110))
                 self.shake = 0.35
             elif kind.startswith("win_"):
                 col = FOX_COL if kind == "win_fox" else CAT_COL
@@ -693,7 +718,7 @@ class Renderer:
         lights = [(g.fox, 95)]
         if not g.cat.hidden:
             lights.append((g.cat, 95))
-        lights += [(n, 55) for n in g.npcs]
+        lights += [(n, 85 if n.kind == "janis" else 55) for n in g.npcs]
         lights += [(f, 20) for f in g.fish]
         if STYLE["name"] == "manor":
             lights += [(Spot(*cell_center(c, r + 1)), 60) for c, r in FIREPLACES]
@@ -720,6 +745,11 @@ class Renderer:
             draw_door(scr, d, self.t)
         if STYLE["name"] == "manor":
             draw_fire(scr, self.t)
+        for c, r in SWITCHES:                       # light switches on the hall wall
+            sx, sy = c * TILE + 11, (r - 1) * TILE + HUD_H + TILE - 16
+            pygame.draw.rect(scr, (60, 50, 50), (sx - 1, sy - 1, 12, 14))
+            pygame.draw.rect(scr, (236, 228, 206), (sx, sy, 10, 12))
+            pygame.draw.rect(scr, (60, 50, 50), (sx + 4, sy + (7 if g.dark else 2), 2, 4))
         for s in g.shards:
             draw_shards(scr, s, self.t)
         for v in g.vases:
@@ -739,7 +769,7 @@ class Renderer:
             pygame.draw.ellipse(scr, (250, 250, 250), (x - 13, y - 3, 26, 10))
             scr.blit(self.spr["chicken"], self.spr["chicken"].get_rect(midbottom=(x, y + 4)))
 
-        # след от рывка лиса
+        # fox dash trail
         if g.fox.dash_t > 0:
             self.trail.append([g.fox.x, g.fox.y, 0.25, g.fox.facing])
         for tr in self.trail:
@@ -761,14 +791,22 @@ class Renderer:
             if key == "fox":
                 if g.fox.stun > 0:
                     self.stars(int(b.x), r.top)
+                elif g.fox.kiss > 0:
+                    if int(self.t * 6) % 2:
+                        self.fx.burst(b.x, b.y - 18, (255, 120, 170), 1, 40, 0.8, 3)
+                    bar(scr, int(b.x) - 16, r.top - 8, 32, 5, g.fox.kiss / JANIS_KISS, (255, 120, 170))
+                elif g.fox.hold > 0:
+                    bar(scr, int(b.x) - 16, r.top - 8, 32, 5, g.fox.hold / JANIS_HOLD, (150, 170, 240))
                 elif g.fox.eat > 0:
                     scr.blit(self.spr["chicken"], self.spr["chicken"].get_rect(midbottom=(int(b.x), r.top)))
                 elif g.fox.boost > 0 and int(self.t * 8) % 2:
                     self.fx.burst(b.x, b.y + 6, (255, 200, 120), 1, 30, 0.4, 2)
             if key == "cat" and g.cat.hold > 0:
-                bar(scr, int(b.x) - 16, r.top - 8, 32, 5, g.cat.hold / GRAN_HOLD, PINK)
+                total = GRAN_HOLD if g.cat.held_by == "gran" else JANIS_HOLD
+                col = (150, 170, 240) if g.cat.held_by == "janis" else PINK
+                bar(scr, int(b.x) - 16, r.top - 8, 32, 5, g.cat.hold / total, col)
 
-        if g.cat.hold > 0:
+        if g.cat.hold > 0 and g.cat.held_by in ("gran", "yolanta"):
             self.heart_t -= dt
             if self.heart_t <= 0:
                 self.heart_t = 0.25
@@ -808,25 +846,25 @@ class Renderer:
         self.overlay(150)
         msg, col = {
             "caught": ("THE FOX CAUGHT THE CAT!", FOX_COL),
-            "wardrobe": ("THE FOX FOUND THE CAT!", FOX_COL),
-            "time": ("THE CAT SURVIVED!", CAT_COL),
-            "fish": ("THE CAT COLLECTED ALL THE FISH!", CAT_COL),
-            "hearts": ("THE BLACK CAT DROVE OFF THE FOX!", CAT_COL),
+            "wardrobe": ("THE FOX SNIFFED OUT THE CAT!", FOX_COL),
+            "time": ("THE CAT GOT AWAY!", CAT_COL),
+            "fish": ("THE CAT GOT ALL THE FISH!", CAT_COL),
+            "hearts": ("THE BLACK CAT CHASED OFF THE FOX!", CAT_COL),
         }[g.reason]
         cy = H // 2
         self.text(msg, self.f_big, col, center=(W // 2, cy - 70))
-        self.text(f"Point goes to {PLAYER[m.last]}", self.f_mid, (230, 230, 230), center=(W // 2, cy - 30))
+        self.text(f"point goes to {PLAYER[m.last]}", self.f_mid, (230, 230, 230), center=(W // 2, cy - 30))
         self.text(f"{PLAYER[0]}   {m.wins[0]} : {m.wins[1]}   {PLAYER[1]}", self.f_big,
                   (255, 255, 255), center=(W // 2, cy + 20))
         if m.done:
-            self.text(f"{PLAYER[m.last].upper()} WON THE MATCH!", self.f_big, (255, 230, 120),
+            self.text(f"{PLAYER[m.last].upper()} WINS THE MATCH!", self.f_big, (255, 230, 120),
                       center=(W // 2, cy + 75))
             self.text("Enter — new match,  Esc — menu", self.f_small, (210, 210, 210),
                       center=(W // 2, cy + 115))
         else:
-            self.text(f"First to {WINS_NEEDED} wins · roles switch next round",
+            self.text(f"first to {WINS_NEEDED} wins · roles swap next round",
                       self.f_small, (210, 210, 210), center=(W // 2, cy + 65))
-            self.text("Enter — следующий раунд,  Esc — меню", self.f_small, (210, 210, 210),
+            self.text("Enter — next round,  Esc — menu", self.f_small, (210, 210, 210),
                       center=(W // 2, cy + 92))
 
     def overlay(self, alpha=120):
@@ -835,11 +873,11 @@ class Renderer:
         self.screen.blit(o, (0, 0))
 
     def ability(self, x, y, icon, label, key, cd, total, active=False):
-        """Значок способности: иконка, подпись с клавишей и полоска перезарядки."""
+        """Ability badge: icon, label with key, and a cooldown bar."""
         self.screen.blit(icon, icon.get_rect(midleft=(x, y + 8)))
         x += icon.get_width() + 5
         if active:
-            self.text(f"{label}: идёт!", self.f_tiny, (255, 230, 120), topleft=(x, y + 1))
+            self.text(f"{label}: active!", self.f_tiny, (255, 230, 120), topleft=(x, y + 1))
         elif cd <= 0:
             self.text(f"{label} [{key}]", self.f_tiny, (160, 240, 160), topleft=(x, y + 1))
         else:
@@ -853,29 +891,30 @@ class Renderer:
         pygame.draw.line(scr, (80, 66, 96), (0, HUD_H - 1), (W, HUD_H - 1), 2)
         cat_side, fox_side = SIDES[m.cat_player]["names"], SIDES[1 - m.cat_player]["names"]
 
-        # кот
+        # cat
         scr.blit(self.spr["cat_icon"], (10, 8))
         r = self.text(f"CAT · {PLAYER[m.cat_player]}", self.f_mid, CAT_COL, topleft=(44, 6))
         for i in range(FISH_WIN):
             scr.blit(self.fish_icon if i < g.fish_got else self.fish_icon_dim, (r.right + 8 + i * 19, 12))
         if g.cat.hidden:
-            self.text(f"in wardrobe {math.ceil(g.cat.hide_t)}s · {cat_side[0]} — move, "
-                      f"{cat_side[1]} — exit", self.f_tiny, PINK, topleft=(44, 31))
+            self.text(f"in wardrobe {math.ceil(g.cat.hide_t)}s · {cat_side[0]} — next wardrobe, "
+                      f"{cat_side[1]} — get out", self.f_tiny, PINK, topleft=(44, 31))
         elif g.cat.hold > 0:
-            self.text("Grandma is holding you!", self.f_tiny, PINK, topleft=(44, 31))
+            who = "Janis" if g.cat.held_by == "janis" else "Yolanta"
+            self.text(f"{who} has you!", self.f_tiny, PINK, topleft=(44, 31))
         else:
-            self.ability(44, 29, self.spr["blackcat_icon"], "кошка", cat_side[2], g.cat.summon_cd,
+            self.ability(44, 29, self.spr["blackcat_icon"], "black cat", cat_side[2], g.cat.summon_cd,
                          BLACKCAT_COOLDOWN, active=g.npc("blackcat") is not None)
             if g.cat.ward_cd > 0:
                 self.text(f"wardrobe in {math.ceil(g.cat.ward_cd)}s", self.f_tiny, (150, 140, 160),
                           topleft=(200, 31))
 
-        # таймер
+        # timer
         tl = max(0, math.ceil(g.time_left))
         col = (255, 90, 90) if tl <= 10 else (255, 255, 255)
         self.text(f"{tl // 60}:{tl % 60:02d}", self.f_big, col, center=(W // 2 + 30, HUD_H // 2 + 2))
 
-        # лис
+        # fox
         rx = W - 290
         scr.blit(self.spr["fox_icon"], (rx, 8))
         r = self.text(f"FOX · {PLAYER[1 - m.cat_player]}", self.f_mid, FOX_COL, topleft=(rx + 34, 6))
@@ -884,11 +923,16 @@ class Renderer:
             scr.blit(img, (r.right + 8 + i * 20, 8))
         if g.fox.stun > 0:
             self.text("stunned!", self.f_tiny, (255, 230, 80), topleft=(rx + 34, 31))
+        elif g.fox.kiss > 0:
+            self.text("kissed by Janis!", self.f_tiny, (255, 140, 190), topleft=(rx + 34, 31))
+        elif g.fox.hold > 0:
+            who = "Janis" if g.fox.held_by == "janis" else "Yolanta"
+            self.text(f"{who} has you!", self.f_tiny, (170, 190, 255), topleft=(rx + 34, 31))
         elif g.fox.eat > 0:
             self.text("eating chicken...", self.f_tiny, (255, 200, 120), topleft=(rx + 34, 31))
         else:
-            self.ability(rx + 34, 29, self.spr["star"], "рывок", fox_side[1], g.fox.dash_cd, DASH_COOLDOWN)
-            self.ability(rx + 146, 29, self.spr["gran_icon"], "бабушка", fox_side[2], g.fox.summon_cd,
+            self.ability(rx + 34, 29, self.spr["star"], "dash", fox_side[1], g.fox.dash_cd, DASH_COOLDOWN)
+            self.ability(rx + 146, 29, self.spr["gran_icon"], "Yolanta", fox_side[2], g.fox.summon_cd,
                          GRAN_COOLDOWN, active=g.npc("gran") is not None)
 
     def draw_menu(self, dt):
@@ -903,46 +947,48 @@ class Renderer:
             img = pygame.transform.scale(img, (int(img.get_width() * scale), int(img.get_height() * scale)))
             scr.blit(img, img.get_rect(midbottom=(cx, by)))
 
-        # название
+        # title
         title = pygame.font.Font(None, 92)
         bob = math.sin(self.t * 2) * 3
         r = self.text("BLUE BLOOD", title, (120, 160, 255), center=(W // 2, 58 + bob))
         pygame.draw.line(scr, (230, 196, 90), (r.left + 10, r.bottom + 2), (r.right - 10, r.bottom + 2), 2)
         show("blackcat", 1, 62, 104, 1.0)
         show("cat", 1, 150, 100, 1.4)
-        show("fox", -1, W - 150, 100, 1.4)
-        show("gran", -1, W - 60, 104, 1.1)
-        self.text("the cat escapes — the fox hunts · roles switch each round · first to 3 wins",
+        show("fox", -1, W - 170, 100, 1.4)
+        show("janis", -1, W - 108, 104, 1.1)
+        show("gran", -1, W - 48, 104, 1.1)
+        self.text("the cat runs, the fox chases · roles swap every round · first to 3 wins",
                   self.f_small, (235, 235, 235), center=(W // 2, 122))
 
         lx, rx, y0 = 50, W // 2 + 20, 148
         self.text("CAT", self.f_mid, CAT_COL, topleft=(lx, y0))
         for i, s in enumerate(["Survive 1:30 or collect 5 fish",
                                "Action: door / vase / wardrobe",
-                               "Break a vase — shards slow the fox",
-                               "Hide in a wardrobe and move between",
-                               "   wardrobes while the fox guesses",
-                               "Perk: black cat — chases the fox",
-                               "   and takes one of its hearts"]):
+                               "Smash a vase — shards slow the fox,",
+                               "   but the noise brings Janis or Yolanta",
+                               "Hide in wardrobes, sneak between them",
+                               "Perk: black cat — chases the fox,",
+                               "   a catch costs the fox a heart"]):
             self.text(s, self.f_small, (235, 235, 235), topleft=(lx, y0 + 28 + i * 22))
         self.text("FOX", self.f_mid, FOX_COL, topleft=(rx, y0))
         for i, s in enumerate(["Catch the cat! You have 3 hearts",
                                "Action: dash",
-                               "Wait by a wardrobe to sniff out the cat",
+                               "Wait at a wardrobe to sniff out the cat",
                                "Chicken in the kitchen makes you faster",
-                               "Scratch through closed doors",
-                               "Perk: grandma — catches the cat",
-                               "   and holds it while you run"]):
+                               "You can scratch through closed doors",
+                               "Perk: Yolanta — grabs the cat",
+                               "   and holds it while you run over"]):
             self.text(s, self.f_small, (235, 235, 235), topleft=(rx, y0 + 28 + i * 22))
 
-        self.text("Sometimes the lights go out!", self.f_small, (255, 240, 160), center=(W // 2, y0 + 200))
+        self.text("Lights out? Old Janis comes to fix them and grabs anyone in his way!",
+                  self.f_small, (255, 240, 160), center=(W // 2, y0 + 200))
         for i in range(2):
             n = SIDES[i]["names"]
             self.text(f"{PLAYER[i]}:  {n[0]} — move,  {n[1]} — action,  {n[2]} — perk",
                       self.f_small, (200, 220, 255), center=(W // 2, y0 + 236 + i * 24))
 
         style = "Manor" if STYLE["name"] == "manor" else "House"
-        self.text(f"T — оформление: {style}", self.f_small, (190, 190, 200), center=(W // 2, H - 62))
+        self.text(f"T — style: {style}", self.f_small, (190, 190, 200), center=(W // 2, H - 62))
         if int(self.t * 2) % 2 == 0:
             self.text("Press ENTER to start", self.f_mid, (255, 255, 160), center=(W // 2, H - 30))
 
@@ -956,7 +1002,7 @@ async def main():
     game = Game()
     match = Match()
     state = "menu"
-    held = set()   # физические клавиши, которые сейчас зажаты
+    held = set()   # physical keys currently held down
 
     while True:
         dt = min(clock.tick(60) / 1000.0, 0.05)
@@ -1011,7 +1057,7 @@ async def main():
             rnd.draw_game(game, match, dt, state)
 
         pygame.display.flip()
-        await asyncio.sleep(0)  # нужно для работы в браузере (pygbag)
+        await asyncio.sleep(0)  # required for the browser build (pygbag)
 
 
 if __name__ == "__main__":

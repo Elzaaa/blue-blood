@@ -1,56 +1,67 @@
-"""Пиксель-арт, нарисованный прямо в коде.
+"""Pixel art drawn right in the code.
 
-Каждый спрайт — список строк, каждый символ — пиксель (цвет из палитры).
-'.' — прозрачный. Обводка добавляется автоматически.
-Свою картинку можно положить в папку assets/ (PNG с прозрачным фоном),
-она подхватится вместо встроенной: cat_0.png, cat_1.png, fox_0.png, fox_1.png,
-blackcat_0.png, blackcat_1.png, gran_0.png, gran_1.png.
+Each sprite is a list of strings; each character is a pixel (a palette color).
+'.' is transparent. The outline is added automatically.
+You can drop your own image into assets/ (PNG with transparency)
+and it will replace the built-in one: cat_0.png, cat_1.png, fox_0.png, fox_1.png,
+blackcat_0.png, blackcat_1.png, gran_0.png, gran_1.png,
+janis_0.png, janis_1.png.
 """
 import os
 import pygame
 
 PALETTE = {
-    # кот
-    "O": (150, 100, 66),   # шерсть — приятный коричневый
-    "o": (92, 58, 36),     # полоски
-    "W": (250, 246, 238),  # белое (носочки, мордочка)
-    "E": (110, 200, 90),   # глаза
-    "P": (236, 140, 150),  # нос
-    # лис
+    # cat
+    "O": (150, 100, 66),   # fur, a nice brown
+    "o": (92, 58, 36),     # stripes
+    "W": (250, 246, 238),  # white (socks, muzzle)
+    "E": (110, 200, 90),   # eyes
+    "P": (236, 140, 150),  # nose
+    # fox
     "F": (236, 112, 36),
     "f": (190, 80, 24),
     "k": (40, 30, 30),
     "e": (30, 24, 20),
-    # чёрная кошка
+    # black cat
     "N": (54, 48, 62),
     "n": (32, 28, 38),
     "Y": (250, 214, 60),
     "p": (180, 110, 130),
-    # бабушка
-    "C": (178, 142, 214),  # пастельный сиреневый костюм и шляпка
+    # grandma
+    "C": (178, 142, 214),  # pastel lilac suit and hat
     "c": (138, 104, 180),
-    "h": (236, 236, 244),  # седые кудри
-    "S": (246, 206, 176),  # кожа
-    "M": (206, 104, 128),  # помада
-    "w": (255, 255, 255),  # жемчуг
-    "t": (224, 198, 180),  # чулки
-    "K": (44, 36, 46),     # сумочка и туфли
-    "G": (244, 150, 186),  # цветок на шляпке, румянец
-    # прочее
+    "h": (236, 236, 244),  # grey curls
+    "S": (246, 206, 176),  # skin
+    "M": (206, 104, 128),  # lipstick
+    "w": (255, 255, 255),  # pearls
+    "t": (224, 198, 180),  # stockings
+    "K": (44, 36, 46),     # handbag and shoes
+    "G": (244, 150, 186),  # hat flower, blush
+    # Janis
+    "J": (52, 60, 92),     # navy three-piece suit
+    "j": (36, 42, 66),
+    "q": (132, 34, 54),    # burgundy waistcoat and bow tie
+    "d": (62, 62, 76),     # trousers
+    "L": (196, 156, 60),   # brass lantern and buttons
+    "x": (198, 198, 208),  # grey hair
+    "X": (120, 120, 136),  # darker grey: brows, hair shading, sideburns
+    "z": (176, 112, 104),  # lips
+    "Z": (222, 170, 142),  # wrinkles
+    # misc
     "R": (232, 52, 72),
     "r": (150, 30, 50),
-    # предметы
-    "B": (120, 180, 236),  # рыбка
+    # items
+    "B": (120, 180, 236),  # fish
     "b": (64, 116, 186),
-    "T": (206, 128, 56),   # жареная курица
+    "T": (206, 128, 56),   # roast chicken
     "u": (160, 88, 34),
-    "V": (242, 244, 250),  # ваза — белый фарфор
-    "v": (52, 86, 170),    # синий узор
-    "g": (70, 160, 80),    # стебель
+    "V": (242, 244, 250),  # vase, white porcelain
+    "v": (52, 86, 170),    # blue pattern
+    "g": (70, 160, 80),    # stem
 }
 OUTLINE = (28, 22, 30)
 
-# Кот: коричневый, в полоску, белые носочки. Смотрит вправо.
+# Cat: brown, striped, white socks. Faces right.
 CAT_0 = [
     "...........O...O",
     "..O.......OoOoO.",
@@ -71,7 +82,7 @@ CAT_1 = CAT_0[:9] + [
     "....WW.WW.WW.WW.",
 ]
 
-# Лис: рыжий, белая грудка и кончик хвоста, чёрные лапки.
+# Fox: orange, white chest and tail tip, black paws.
 FOX_0 = [
     "...........k..k.",
     "...........F..F.",
@@ -84,19 +95,21 @@ FOX_0 = [
     "..FFFFFFFFFFFFF.",
     "...ffFFFFFFFFff.",
     "...f...f..f...f.",
+    "...f...f..f...f.",
     "...k...k..k...k.",
 ]
 FOX_1 = FOX_0[:10] + [
     "....f.f....f.f..",
+    "....f.f....f.f..",
     "....k.k....k.k..",
 ]
 
-# Чёрная кошка — тот же силуэт кота, перекрашенный, и в полтора раза крупнее.
+# Black cat: the same cat silhouette, recolored and 1.5x bigger.
 _BLACK = str.maketrans({"O": "N", "o": "n", "W": "N", "E": "Y", "P": "p"})
 BLACKCAT_0 = [r.translate(_BLACK) for r in CAT_0]
 BLACKCAT_1 = [r.translate(_BLACK) for r in CAT_1]
 
-# Бабушка: элегантный пастельный костюм, шляпка в тон, жемчуг, сумочка.
+# Grandma: elegant pastel suit, matching hat, pearls, handbag.
 GRAN_0 = [
     ".....ccc........",
     "....CCCCCC......",
@@ -158,6 +171,44 @@ VASE = [
     ".vVv.",
 ]
 
+# Janis: a stern old lord to match Yolanta. Tall and broad-shouldered, a full head of
+# grey hair with a swept fringe, heavy brows, a few wrinkles, double-breasted suit, lantern.
+JANIS_0 = [
+    "....xxxxxxx.....",
+    "...xxXxxxxxx....",
+    "...xxxSSSSS.....",
+    "...xxSSSXXS.....",
+    "...xxSSZSeS.....",
+    "...xxSSSSSSS....",
+    "...xxSSSSSS.....",
+    "...xxSSSzzS.....",
+    "....xSSSSS......",
+    "....SSSZS.......",
+    ".....SSSS.......",
+    "....WWqqWW......",
+    "..JJJWqqWJJJ....",
+    ".JJJJJqqJJJJJ...",
+    ".JjJLJJWJLJjJ...",
+    ".JjJJJJJJJJjJS..",
+    ".JjJLJJJJLJjJ.L.",
+    ".JjJJJJJJJJjJLYL",
+    ".JJJJJJJJJJJJLYL",
+    "..JJJJJJJJJJ..L.",
+    "..JJJJ..JJJJ....",
+    "...dd....dd.....",
+    "...dd....dd.....",
+    "...dd....dd.....",
+    "...dd....dd.....",
+    "..KKK...KKK.....",
+]
+JANIS_1 = JANIS_0[:JANIS_0.index("...dd....dd.....")] + [
+    "...dd.....dd....",
+    "..dd......dd....",
+    "..dd......dd....",
+    "..dd......dd....",
+    ".KKK......KKK...",
+]
+
 HEART = [
     ".RR.RR.",
     "RRRRRRR",
@@ -212,6 +263,7 @@ def load_all():
         ("fox", (FOX_0, FOX_1), 2, OUTLINE),
         ("blackcat", (BLACKCAT_0, BLACKCAT_1), 3, (120, 96, 150)),
         ("gran", (GRAN_0, GRAN_1), 2, OUTLINE),
+        ("janis", (JANIS_0, JANIS_1), 2, OUTLINE),
     )
     for key, rows, scale, outline in chars:
         frames = [_load(f"{key}_{i}", r, scale, outline) for i, r in enumerate(rows)]
